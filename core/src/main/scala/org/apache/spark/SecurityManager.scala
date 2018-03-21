@@ -19,6 +19,7 @@ package org.apache.spark
 
 import java.lang.{Byte => JByte}
 import java.net.{Authenticator, PasswordAuthentication}
+import java.nio.charset.StandardCharsets.UTF_8
 import java.security.{KeyStore, SecureRandom}
 import java.security.cert.X509Certificate
 import javax.net.ssl._
@@ -26,11 +27,11 @@ import javax.net.ssl._
 import com.google.common.hash.HashCodes
 import com.google.common.io.Files
 import org.apache.hadoop.io.Text
-import org.apache.hadoop.security.Credentials
+import org.apache.hadoop.security.{Credentials, UserGroupInformation}
 
-import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
+import org.apache.spark.launcher.SparkLauncher
 import org.apache.spark.network.sasl.SecretKeyHolder
 import org.apache.spark.util.Utils
 
@@ -185,7 +186,7 @@ import org.apache.spark.util.Utils
 
 private[spark] class SecurityManager(
     sparkConf: SparkConf,
-    ioEncryptionKey: Option[Array[Byte]] = None)
+    val ioEncryptionKey: Option[Array[Byte]] = None)
   extends Logging with SecretKeyHolder {
 
   import SecurityManager._
@@ -193,7 +194,7 @@ private[spark] class SecurityManager(
   // allow all users/groups to have view/modify permissions
   private val WILDCARD_ACL = "*"
 
-  private val authOn = sparkConf.getBoolean(SecurityManager.SPARK_AUTH_CONF, false)
+  private val authOn = sparkConf.get(NETWORK_AUTH_ENABLED)
   // keep spark.ui.acls.enable for backwards compatibility with 1.0
   private var aclsOn =
     sparkConf.getBoolean("spark.acls.enable", sparkConf.getBoolean("spark.ui.acls.enable", false))
@@ -226,7 +227,6 @@ private[spark] class SecurityManager(
   setViewAclsGroups(sparkConf.get("spark.ui.view.acls.groups", ""));
   setModifyAclsGroups(sparkConf.get("spark.modify.acls.groups", ""));
 
-  private val secretKey = generateSecretKey()
   logInfo("SecurityManager: authentication " + (if (authOn) "enabled" else "disabled") +
     "; ui acls " + (if (aclsOn) "enabled" else "disabled") +
     "; users  with view permissions: " + viewAcls.toString() +
@@ -255,51 +255,6 @@ private[spark] class SecurityManager(
 
   // the default SSL configuration - it will be used by all communication layers unless overwritten
   private val defaultSSLOptions = SSLOptions.parse(sparkConf, "spark.ssl", defaults = None)
-
-  // SSL configuration for the file server. This is used by Utils.setupSecureURLConnection().
-  val fileServerSSLOptions = getSSLOptions("fs")
-  val (sslSocketFactory, hostnameVerifier) = if (fileServerSSLOptions.enabled) {
-    val trustStoreManagers =
-      for (trustStore <- fileServerSSLOptions.trustStore) yield {
-        val input = Files.asByteSource(fileServerSSLOptions.trustStore.get).openStream()
-
-        try {
-          val ks = KeyStore.getInstance(KeyStore.getDefaultType)
-          ks.load(input, fileServerSSLOptions.trustStorePassword.get.toCharArray)
-
-          val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
-          tmf.init(ks)
-          tmf.getTrustManagers
-        } finally {
-          input.close()
-        }
-      }
-
-    lazy val credulousTrustStoreManagers = Array({
-      logWarning("Using 'accept-all' trust manager for SSL connections.")
-      new X509TrustManager {
-        override def getAcceptedIssuers: Array[X509Certificate] = null
-
-        override def checkClientTrusted(x509Certificates: Array[X509Certificate], s: String) {}
-
-        override def checkServerTrusted(x509Certificates: Array[X509Certificate], s: String) {}
-      }: TrustManager
-    })
-
-    require(fileServerSSLOptions.protocol.isDefined,
-      "spark.ssl.protocol is required when enabling SSL connections.")
-
-    val sslContext = SSLContext.getInstance(fileServerSSLOptions.protocol.get)
-    sslContext.init(null, trustStoreManagers.getOrElse(credulousTrustStoreManagers), null)
-
-    val hostVerifier = new HostnameVerifier {
-      override def verify(s: String, sslSession: SSLSession): Boolean = true
-    }
-
-    (Some(sslContext.getSocketFactory), Some(hostVerifier))
-  } else {
-    (None, None)
-  }
 
   def getSSLOptions(module: String): SSLOptions = {
     val opts = SSLOptions.parse(sparkConf, s"spark.ssl.$module", Some(defaultSSLOptions))
@@ -418,50 +373,6 @@ private[spark] class SecurityManager(
   def getIOEncryptionKey(): Option[Array[Byte]] = ioEncryptionKey
 
   /**
-   * Generates or looks up the secret key.
-   *
-   * The way the key is stored depends on the Spark deployment mode. Yarn
-   * uses the Hadoop UGI.
-   *
-   * For non-Yarn deployments, If the config variable is not set
-   * we throw an exception.
-   */
-  private def generateSecretKey(): String = {
-    if (!isAuthenticationEnabled) {
-      null
-    } else if (SparkHadoopUtil.get.isYarnMode) {
-      // In YARN mode, the secure cookie will be created by the driver and stashed in the
-      // user's credentials, where executors can get it. The check for an array of size 0
-      // is because of the test code in YarnSparkHadoopUtilSuite.
-      val secretKey = SparkHadoopUtil.get.getSecretKeyFromUserCredentials(SECRET_LOOKUP_KEY)
-      if (secretKey == null || secretKey.length == 0) {
-        logDebug("generateSecretKey: yarn mode, secret key from credentials is null")
-        val rnd = new SecureRandom()
-        val length = sparkConf.getInt("spark.authenticate.secretBitLength", 256) / JByte.SIZE
-        val secret = new Array[Byte](length)
-        rnd.nextBytes(secret)
-
-        val cookie = HashCodes.fromBytes(secret).toString()
-        SparkHadoopUtil.get.addSecretKeyToUserCredentials(SECRET_LOOKUP_KEY, cookie)
-        cookie
-      } else {
-        new Text(secretKey).toString
-      }
-    } else {
-      // user must have set spark.authenticate.secret config
-      // For Master/Worker, auth secret is in conf; for Executors, it is in env variable
-      Option(sparkConf.getenv(SecurityManager.ENV_AUTH_SECRET))
-        .orElse(sparkConf.getOption(SecurityManager.SPARK_AUTH_SECRET_CONF)) match {
-        case Some(value) => value
-        case None =>
-          throw new IllegalArgumentException(
-            "Error: a secret key must be specified via the " +
-              SecurityManager.SPARK_AUTH_SECRET_CONF + " config")
-      }
-    }
-  }
-
-  /**
    * Check to see if Acls for the UI are enabled
    * @return true if UI authentication is enabled, otherwise false
    */
@@ -518,11 +429,11 @@ private[spark] class SecurityManager(
   def isAuthenticationEnabled(): Boolean = authOn
 
   /**
-   * Checks whether SASL encryption should be enabled.
-   * @return Whether to enable SASL encryption when connecting to services that support it.
+   * Checks whether network encryption should be enabled.
+   * @return Whether to enable encryption when connecting to services that support it.
    */
-  def isSaslEncryptionEnabled(): Boolean = {
-    sparkConf.getBoolean("spark.authenticate.enableSaslEncryption", false)
+  def isEncryptionEnabled(): Boolean = {
+    sparkConf.get(NETWORK_ENCRYPTION_ENABLED) || sparkConf.get(SASL_ENCRYPTION_ENABLED)
   }
 
   /**
@@ -543,7 +454,58 @@ private[spark] class SecurityManager(
    * Gets the secret key.
    * @return the secret key as a String if authentication is enabled, otherwise returns null
    */
-  def getSecretKey(): String = secretKey
+  def getSecretKey(): String = {
+    if (isAuthenticationEnabled) {
+      val creds = UserGroupInformation.getCurrentUser().getCredentials()
+      Option(creds.getSecretKey(SECRET_LOOKUP_KEY))
+        .map { bytes => new String(bytes, UTF_8) }
+        .orElse(Option(sparkConf.getenv(ENV_AUTH_SECRET)))
+        .orElse(sparkConf.getOption(SPARK_AUTH_SECRET_CONF))
+        .getOrElse {
+          throw new IllegalArgumentException(
+            s"A secret key must be specified via the $SPARK_AUTH_SECRET_CONF config")
+        }
+    } else {
+      null
+    }
+  }
+
+  /**
+   * Initialize the authentication secret.
+   *
+   * If authentication is disabled, do nothing.
+   *
+   * In YARN and local mode, generate a new secret and store it in the current user's credentials.
+   *
+   * In other modes, assert that the auth secret is set in the configuration.
+   */
+  def initializeAuth(): Unit = {
+    import SparkMasterRegex._
+
+    if (!sparkConf.get(NETWORK_AUTH_ENABLED)) {
+      return
+    }
+
+    val master = sparkConf.get(SparkLauncher.SPARK_MASTER, "")
+    master match {
+      case "yarn" | "local" | LOCAL_N_REGEX(_) | LOCAL_N_FAILURES_REGEX(_, _) =>
+        // Secret generation allowed here
+      case _ =>
+        require(sparkConf.contains(SPARK_AUTH_SECRET_CONF),
+          s"A secret key must be specified via the $SPARK_AUTH_SECRET_CONF config.")
+        return
+    }
+
+    val rnd = new SecureRandom()
+    val length = sparkConf.getInt("spark.authenticate.secretBitLength", 256) / JByte.SIZE
+    val secretBytes = new Array[Byte](length)
+    rnd.nextBytes(secretBytes)
+
+    val creds = new Credentials()
+    val secretStr = HashCodes.fromBytes(secretBytes).toString()
+    creds.addSecretKey(SECRET_LOOKUP_KEY, secretStr.getBytes(UTF_8))
+    UserGroupInformation.getCurrentUser().addCredentials(creds)
+  }
 
   // Default SecurityManager only has a single secret key, so ignore appId.
   override def getSaslUser(appId: String): String = getSaslUser()
@@ -552,13 +514,12 @@ private[spark] class SecurityManager(
 
 private[spark] object SecurityManager {
 
-  val SPARK_AUTH_CONF: String = "spark.authenticate"
-  val SPARK_AUTH_SECRET_CONF: String = "spark.authenticate.secret"
+  val SPARK_AUTH_CONF = NETWORK_AUTH_ENABLED.key
+  val SPARK_AUTH_SECRET_CONF = "spark.authenticate.secret"
   // This is used to set auth secret to an executor's env variable. It should have the same
   // value as SPARK_AUTH_SECRET_CONF set in SparkConf
   val ENV_AUTH_SECRET = "_SPARK_AUTH_SECRET"
 
   // key used to store the spark secret in the Hadoop UGI
-  val SECRET_LOOKUP_KEY = "sparkCookie"
-
+  val SECRET_LOOKUP_KEY = new Text("sparkCookie")
 }

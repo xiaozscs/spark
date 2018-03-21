@@ -87,7 +87,7 @@ More details on parameters can be found in the [R API documentation](api/R/spark
 The `spark.ml` implementation of logistic regression also supports
 extracting a summary of the model over the training set. Note that the
 predictions and metrics which are stored as `DataFrame` in
-`BinaryLogisticRegressionSummary` are annotated `@transient` and hence
+`LogisticRegressionSummary` are annotated `@transient` and hence
 only available on the driver.
 
 <div class="codetabs">
@@ -97,10 +97,9 @@ only available on the driver.
 [`LogisticRegressionTrainingSummary`](api/scala/index.html#org.apache.spark.ml.classification.LogisticRegressionTrainingSummary)
 provides a summary for a
 [`LogisticRegressionModel`](api/scala/index.html#org.apache.spark.ml.classification.LogisticRegressionModel).
-Currently, only binary classification is supported and the
-summary must be explicitly cast to
-[`BinaryLogisticRegressionTrainingSummary`](api/scala/index.html#org.apache.spark.ml.classification.BinaryLogisticRegressionTrainingSummary).
-This will likely change when multiclass classification is supported.
+In the case of binary classification, certain additional metrics are
+available, e.g. ROC curve. The binary summary can be accessed via the
+`binarySummary` method. See [`BinaryLogisticRegressionTrainingSummary`](api/scala/index.html#org.apache.spark.ml.classification.BinaryLogisticRegressionTrainingSummary).
 
 Continuing the earlier example:
 
@@ -111,10 +110,9 @@ Continuing the earlier example:
 [`LogisticRegressionTrainingSummary`](api/java/org/apache/spark/ml/classification/LogisticRegressionTrainingSummary.html)
 provides a summary for a
 [`LogisticRegressionModel`](api/java/org/apache/spark/ml/classification/LogisticRegressionModel.html).
-Currently, only binary classification is supported and the
-summary must be explicitly cast to
-[`BinaryLogisticRegressionTrainingSummary`](api/java/org/apache/spark/ml/classification/BinaryLogisticRegressionTrainingSummary.html). 
-Support for multiclass model summaries will be added in the future.
+In the case of binary classification, certain additional metrics are
+available, e.g. ROC curve. The binary summary can be accessed via the
+`binarySummary` method. See [`BinaryLogisticRegressionTrainingSummary`](api/java/org/apache/spark/ml/classification/BinaryLogisticRegressionTrainingSummary.html).
 
 Continuing the earlier example:
 
@@ -125,7 +123,8 @@ Continuing the earlier example:
 [`LogisticRegressionTrainingSummary`](api/python/pyspark.ml.html#pyspark.ml.classification.LogisticRegressionSummary)
 provides a summary for a
 [`LogisticRegressionModel`](api/python/pyspark.ml.html#pyspark.ml.classification.LogisticRegressionModel).
-Currently, only binary classification is supported. Support for multiclass model summaries will be added in the future.
+In the case of binary classification, certain additional metrics are
+available, e.g. ROC curve. See [`BinaryLogisticRegressionTrainingSummary`](api/python/pyspark.ml.html#pyspark.ml.classification.BinaryLogisticRegressionTrainingSummary).
 
 Continuing the earlier example:
 
@@ -162,7 +161,8 @@ For a detailed derivation please see [here](https://en.wikipedia.org/wiki/Multin
 **Examples**
 
 The following example shows how to train a multiclass logistic regression 
-model with elastic net regularization.
+model with elastic net regularization, as well as extract the multiclass
+training summary for evaluating the model.
 
 <div class="codetabs">
 
@@ -220,6 +220,14 @@ More details on parameters can be found in the [Java API documentation](api/java
 More details on parameters can be found in the [Python API documentation](api/python/pyspark.ml.html#pyspark.ml.classification.DecisionTreeClassifier).
 
 {% include_example python/ml/decision_tree_classification_example.py %}
+
+</div>
+
+<div data-lang="r" markdown="1">
+
+Refer to the [R API docs](api/R/spark.decisionTree.html) for more details.
+
+{% include_example classification r/ml/decisionTree.R %}
 
 </div>
 
@@ -363,6 +371,50 @@ Refer to the [R API docs](api/R/spark.mlp.html) for more details.
 
 </div>
 
+## Linear Support Vector Machine
+
+A [support vector machine](https://en.wikipedia.org/wiki/Support_vector_machine) constructs a hyperplane
+or set of hyperplanes in a high- or infinite-dimensional space, which can be used for classification,
+regression, or other tasks. Intuitively, a good separation is achieved by the hyperplane that has
+the largest distance to the nearest training-data points of any class (so-called functional margin),
+since in general the larger the margin the lower the generalization error of the classifier. LinearSVC
+in Spark ML supports binary classification with linear SVM. Internally, it optimizes the 
+[Hinge Loss](https://en.wikipedia.org/wiki/Hinge_loss) using OWLQN optimizer.
+
+
+**Examples**
+
+<div class="codetabs">
+
+<div data-lang="scala" markdown="1">
+
+Refer to the [Scala API docs](api/scala/index.html#org.apache.spark.ml.classification.LinearSVC) for more details.
+
+{% include_example scala/org/apache/spark/examples/ml/LinearSVCExample.scala %}
+</div>
+
+<div data-lang="java" markdown="1">
+
+Refer to the [Java API docs](api/java/org/apache/spark/ml/classification/LinearSVC.html) for more details.
+
+{% include_example java/org/apache/spark/examples/ml/JavaLinearSVCExample.java %}
+</div>
+
+<div data-lang="python" markdown="1">
+
+Refer to the [Python API docs](api/python/pyspark.ml.html#pyspark.ml.classification.LinearSVC) for more details.
+
+{% include_example python/ml/linearsvc.py %}
+</div>
+
+<div data-lang="r" markdown="1">
+
+Refer to the [R API docs](api/R/spark.svmLinear.html) for more details.
+
+{% include_example r/ml/svmLinear.R %}
+</div>
+
+</div>
 
 ## One-vs-Rest classifier (a.k.a. One-vs-All)
 
@@ -585,6 +637,11 @@ others.
       <td>Continuous</td>
       <td>Inverse*, Idenity, Log</td>
     </tr>
+    <tr>
+      <td>Tweedie</td>
+      <td>Zero-inflated continuous</td>
+      <td>Power link function</td>
+    </tr>
     <tfoot><tr><td colspan="4">* Canonical Link</td></tr></tfoot>
   </tbody>
 </table>
@@ -657,6 +714,13 @@ More details on parameters can be found in the [Java API documentation](api/java
 More details on parameters can be found in the [Python API documentation](api/python/pyspark.ml.html#pyspark.ml.regression.DecisionTreeRegressor).
 
 {% include_example python/ml/decision_tree_regression_example.py %}
+</div>
+
+<div data-lang="r" markdown="1">
+
+Refer to the [R API docs](api/R/spark.decisionTree.html) for more details.
+
+{% include_example regression r/ml/decisionTree.R %}
 </div>
 
 </div>

@@ -49,7 +49,7 @@ private[regression] trait IsotonicRegressionBase extends Params with HasFeatures
    */
   final val isotonic: BooleanParam =
     new BooleanParam(this, "isotonic",
-      "whether the output sequence should be isotonic/increasing (true) or" +
+      "whether the output sequence should be isotonic/increasing (true) or " +
         "antitonic/decreasing (false)")
 
   /** @group getParam */
@@ -86,11 +86,8 @@ private[regression] trait IsotonicRegressionBase extends Params with HasFeatures
     } else {
       col($(featuresCol))
     }
-    val w = if (hasWeightCol) {
-      col($(weightCol))
-    } else {
-      lit(1.0)
-    }
+    val w = if (hasWeightCol) col($(weightCol)).cast(DoubleType) else lit(1.0)
+
     dataset.select(col($(labelCol)).cast(DoubleType), f, w).rdd.map {
       case Row(label: Double, feature: Double, weight: Double) =>
         (label, feature, weight)
@@ -109,7 +106,7 @@ private[regression] trait IsotonicRegressionBase extends Params with HasFeatures
     if (fitting) {
       SchemaUtils.checkNumericType(schema, $(labelCol))
       if (hasWeightCol) {
-        SchemaUtils.checkColumnType(schema, $(weightCol), DoubleType)
+        SchemaUtils.checkNumericType(schema, $(weightCol))
       } else {
         logInfo("The weight column is not defined. Treat all instance weights as 1.0.")
       }
@@ -168,13 +165,21 @@ class IsotonicRegression @Since("1.5.0") (@Since("1.5.0") override val uid: Stri
     transformSchema(dataset.schema, logging = true)
     // Extract columns from data.  If dataset is persisted, do not persist oldDataset.
     val instances = extractWeightedLabeledPoints(dataset)
-    val handlePersistence = dataset.rdd.getStorageLevel == StorageLevel.NONE
+    val handlePersistence = dataset.storageLevel == StorageLevel.NONE
     if (handlePersistence) instances.persist(StorageLevel.MEMORY_AND_DISK)
+
+    val instr = Instrumentation.create(this, dataset)
+    instr.logParams(labelCol, featuresCol, weightCol, predictionCol, featureIndex, isotonic)
+    instr.logNumFeatures(1)
 
     val isotonicRegression = new MLlibIsotonicRegression().setIsotonic($(isotonic))
     val oldModel = isotonicRegression.run(instances)
 
-    copyValues(new IsotonicRegressionModel(uid, oldModel).setParent(this))
+    if (handlePersistence) instances.unpersist()
+
+    val model = copyValues(new IsotonicRegressionModel(uid, oldModel).setParent(this))
+    instr.logSuccess(model)
+    model
   }
 
   @Since("1.5.0")

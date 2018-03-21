@@ -27,8 +27,8 @@ in the UI to persisted storage.
 
 ## Viewing After the Fact
 
-If Spark is run on Mesos or YARN, it is still possible to construct the UI of an
-application through Spark's history server, provided that the application's event logs exist.
+It is still possible to construct the UI of an application through Spark's history server, 
+provided that the application's event logs exist.
 You can start the history server by executing:
 
     ./sbin/start-history-server.sh
@@ -60,6 +60,10 @@ The history server can be configured as follows:
   <tr>
     <td><code>SPARK_DAEMON_JAVA_OPTS</code></td>
     <td>JVM options for the history server (default: none).</td>
+  </tr>
+  <tr>
+    <td><code>SPARK_DAEMON_CLASSPATH</code></td>
+    <td>Classpath for the history server (default: none).</td>
   </tr>
   <tr>
     <td><code>SPARK_PUBLIC_DNS</code></td>
@@ -114,7 +118,7 @@ The history server can be configured as follows:
     <td>
       The number of applications to retain UI data for in the cache. If this cap is exceeded, then
       the oldest applications will be removed from the cache. If an application is not in the cache,
-      it will have to be loaded from disk if its accessed from the UI.
+      it will have to be loaded from disk if it is accessed from the UI.
     </td>
   </tr>
   <tr>
@@ -220,6 +224,15 @@ The history server can be configured as follows:
       Number of threads that will be used by history server to process event logs.
     </td>
   </tr>
+  <tr>
+    <td>spark.history.store.path</td>
+    <td>(none)</td>
+    <td>
+        Local directory where to cache application history data. If set, the history
+        server will store application data on disk instead of keeping it in memory. The data
+        written to disk will be re-used in the event of a history server restart.
+    </td>
+  </tr>
 </table>
 
 Note that in all of these UIs, the tables are sortable by clicking their headers,
@@ -257,7 +270,7 @@ In the API, an application is referenced by its application ID, `[app-id]`.
 When running on YARN, each application may have multiple attempts, but there are attempt IDs
 only for applications in cluster mode, not applications in client mode. Applications in YARN cluster mode
 can be identified by their `[attempt-id]`. In the API listed below, when running in YARN cluster mode,
-`[app-id]` will actually be `[base-app-id]/[attempt-id]`, where `[base-app-id]` is the YARN application ID.
+`[app-id]` will actually be `[base-app-id]/[attempt-id]`, where `[base-app-id]` is the YARN application ID.
 
 <table class="table">
   <tr><th>Endpoint</th><th>Meaning</th></tr>
@@ -267,18 +280,29 @@ can be identified by their `[attempt-id]`. In the API listed below, when running
     <br>
     <code>?status=[completed|running]</code> list only applications in the chosen state.
     <br>
-    <code>?minDate=[date]</code> earliest date/time to list.
+    <code>?minDate=[date]</code> earliest start date/time to list.
+    <br>
+    <code>?maxDate=[date]</code> latest start date/time to list.
+    <br>
+    <code>?minEndDate=[date]</code> earliest end date/time to list.
+    <br>
+    <code>?maxEndDate=[date]</code> latest end date/time to list.
+    <br>
+    <code>?limit=[limit]</code> limits the number of applications listed.
     <br>Examples:
     <br><code>?minDate=2015-02-10</code>
     <br><code>?minDate=2015-02-03T16:42:40.000GMT</code>
-    <br><code>?maxDate=[date]</code> latest date/time to list; uses same format as <code>minDate</code>.
-    <br><code>?limit=[limit]</code> limits the number of applications listed.</td>
+    <br><code>?maxDate=2015-02-11T20:41:30.000GMT</code>
+    <br><code>?minEndDate=2015-02-12</code>
+    <br><code>?minEndDate=2015-02-12T09:15:10.000GMT</code>
+    <br><code>?maxEndDate=2015-02-14T16:30:45.000GMT</code>
+    <br><code>?limit=10</code></td>
   </tr>
   <tr>
     <td><code>/applications/[app-id]/jobs</code></td>
     <td>
       A list of all jobs for a given application.
-      <br><code>?status=[complete|succeeded|failed]</code> list only jobs in the specific state.
+      <br><code>?status=[running|succeeded|failed|unknown]</code> list only jobs in the specific state.
     </td>
   </tr>
   <tr>
@@ -287,13 +311,15 @@ can be identified by their `[attempt-id]`. In the API listed below, when running
   </tr>
   <tr>
     <td><code>/applications/[app-id]/stages</code></td>
-    <td>A list of all stages for a given application.</td>
+    <td>
+      A list of all stages for a given application.
+      <br><code>?status=[active|complete|pending|failed]</code> list only stages in the state.
+    </td>
   </tr>
   <tr>
     <td><code>/applications/[app-id]/stages/[stage-id]</code></td>
     <td>
       A list of all attempts for the given stage.
-      <br><code>?status=[active|complete|pending|failed]</code> list only stages in the state.
     </td>
   </tr>
   <tr>
@@ -320,6 +346,13 @@ can be identified by their `[attempt-id]`. In the API listed below, when running
   <tr>
     <td><code>/applications/[app-id]/executors</code></td>
     <td>A list of all active executors for the given application.</td>
+  </tr>
+  <tr>
+    <td><code>/applications/[app-id]/executors/[executor-id]/threads</code></td>
+    <td>
+      Stack traces of all the threads running within the given active executor.
+      Not available via the history server.
+    </td>
   </tr>
   <tr>
     <td><code>/applications/[app-id]/allexecutors</code></td>
@@ -370,10 +403,18 @@ can be identified by their `[attempt-id]`. In the API listed below, when running
   <tr>
     <td><code>/applications/[app-id]/streaming/batches/[batch-id]/operations/[outputOp-id]</code></td>
     <td>Details of the given operation and given batch.</td>
-  </tr>       
+  </tr>
+  <tr>
+    <td><code>/applications/[app-id]/environment</code></td>
+    <td>Environment details of the given application.</td>
+  </tr>
+  <tr>
+    <td><code>/version</code></td>
+    <td>Get the current spark version.</td>
+  </tr>
 </table>
 
-The number of jobs and stages which can retrieved is constrained by the same retention
+The number of jobs and stages which can be retrieved is constrained by the same retention
 mechanism of the standalone Spark UI; `"spark.ui.retainedJobs"` defines the threshold
 value triggering garbage collection on jobs, and `spark.ui.retainedStages` that for stages.
 Note that the garbage collection takes place on playback: it is possible to retrieve
@@ -388,10 +429,10 @@ These endpoints have been strongly versioned to make it easier to develop applic
 * Individual fields will never be removed for any given endpoint
 * New endpoints may be added
 * New fields may be added to existing endpoints
-* New versions of the api may be added in the future at a separate endpoint (eg., `api/v2`).  New versions are *not* required to be backwards compatible.
+* New versions of the api may be added in the future as a separate endpoint (eg., `api/v2`).  New versions are *not* required to be backwards compatible.
 * Api versions may be dropped, but only after at least one minor release of co-existing with a new api version.
 
-Note that even when examining the UI of a running applications, the `applications/[app-id]` portion is
+Note that even when examining the UI of running applications, the `applications/[app-id]` portion is
 still required, though there is only one application available.  Eg. to see the list of jobs for the
 running app, you would go to `http://localhost:4040/api/v1/applications/[app-id]/jobs`.  This is to
 keep the paths consistent in both modes.
@@ -436,6 +477,7 @@ Each instance can report to zero or more _sinks_. Sinks are contained in the
 * `MetricsServlet`: Adds a servlet within the existing Spark UI to serve metrics data as JSON data.
 * `GraphiteSink`: Sends metrics to a Graphite node.
 * `Slf4jSink`: Sends metrics to slf4j as log entries.
+* `StatsdSink`: Sends metrics to a StatsD node.
 
 Spark also supports a Ganglia sink which is not included in the default build due to
 licensing restrictions:

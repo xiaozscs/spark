@@ -21,7 +21,7 @@ import java.{util => ju}
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.kafka.clients.consumer.ConsumerRecord
+import org.apache.kafka.clients.consumer.{ConsumerConfig, ConsumerRecord}
 import org.apache.kafka.common.TopicPartition
 
 import org.apache.spark.{Partition, SparkContext, TaskContext}
@@ -52,7 +52,7 @@ private[kafka010] case class KafkaSourceRDDPartition(
  * An RDD that reads data from Kafka based on offset ranges across multiple partitions.
  * Additionally, it allows preferred locations to be set for each topic + partition, so that
  * the [[KafkaSource]] can ensure the same executor always reads the same topic + partition
- * and cached KafkaConsuemrs (see [[CachedKafkaConsumer]] can be used read data efficiently.
+ * and cached KafkaConsumers (see [[KafkaDataConsumer]] can be used read data efficiently.
  *
  * @param sc the [[SparkContext]]
  * @param executorKafkaParams Kafka configuration for creating KafkaConsumer on the executors
@@ -63,7 +63,8 @@ private[kafka010] class KafkaSourceRDD(
     executorKafkaParams: ju.Map[String, Object],
     offsetRanges: Seq[KafkaSourceRDDOffsetRange],
     pollTimeoutMs: Long,
-    failOnDataLoss: Boolean)
+    failOnDataLoss: Boolean,
+    reuseKafkaConsumer: Boolean)
   extends RDD[ConsumerRecord[Array[Byte], Array[Byte]]](sc, Nil) {
 
   override def persist(newLevel: StorageLevel): this.type = {
@@ -122,7 +123,13 @@ private[kafka010] class KafkaSourceRDD(
   override def compute(
       thePart: Partition,
       context: TaskContext): Iterator[ConsumerRecord[Array[Byte], Array[Byte]]] = {
-    val range = thePart.asInstanceOf[KafkaSourceRDDPartition].offsetRange
+    val sourcePartition = thePart.asInstanceOf[KafkaSourceRDDPartition]
+    val topic = sourcePartition.offsetRange.topic
+    val kafkaPartition = sourcePartition.offsetRange.partition
+    val consumer = KafkaDataConsumer.acquire(
+      sourcePartition.offsetRange.topicPartition, executorKafkaParams, reuseKafkaConsumer)
+
+    val range = resolveRange(consumer, sourcePartition.offsetRange)
     assert(
       range.fromOffset <= range.untilOffset,
       s"Beginning offset ${range.fromOffset} is after the ending offset ${range.untilOffset} " +
@@ -133,9 +140,7 @@ private[kafka010] class KafkaSourceRDD(
         s"skipping ${range.topic} ${range.partition}")
       Iterator.empty
     } else {
-      new NextIterator[ConsumerRecord[Array[Byte], Array[Byte]]]() {
-        val consumer = CachedKafkaConsumer.getOrCreate(
-          range.topic, range.partition, executorKafkaParams)
+      val underlying = new NextIterator[ConsumerRecord[Array[Byte], Array[Byte]]]() {
         var requestOffset = range.fromOffset
 
         override def getNext(): ConsumerRecord[Array[Byte], Array[Byte]] = {
@@ -156,8 +161,40 @@ private[kafka010] class KafkaSourceRDD(
           }
         }
 
-        override protected def close(): Unit = {}
+        override protected def close(): Unit = {
+          consumer.release()
+        }
       }
+      // Release consumer, either by removing it or indicating we're no longer using it
+      context.addTaskCompletionListener { _ =>
+        underlying.closeIfNeeded()
+      }
+      underlying
+    }
+  }
+
+  private def resolveRange(consumer: KafkaDataConsumer, range: KafkaSourceRDDOffsetRange) = {
+    if (range.fromOffset < 0 || range.untilOffset < 0) {
+      // Late bind the offset range
+      val availableOffsetRange = consumer.getAvailableOffsetRange()
+      val fromOffset = if (range.fromOffset < 0) {
+        assert(range.fromOffset == KafkaOffsetRangeLimit.EARLIEST,
+          s"earliest offset ${range.fromOffset} does not equal ${KafkaOffsetRangeLimit.EARLIEST}")
+        availableOffsetRange.earliest
+      } else {
+        range.fromOffset
+      }
+      val untilOffset = if (range.untilOffset < 0) {
+        assert(range.untilOffset == KafkaOffsetRangeLimit.LATEST,
+          s"latest offset ${range.untilOffset} does not equal ${KafkaOffsetRangeLimit.LATEST}")
+        availableOffsetRange.latest
+      } else {
+        range.untilOffset
+      }
+      KafkaSourceRDDOffsetRange(range.topicPartition,
+        fromOffset, untilOffset, range.preferredLoc)
+    } else {
+      range
     }
   }
 }

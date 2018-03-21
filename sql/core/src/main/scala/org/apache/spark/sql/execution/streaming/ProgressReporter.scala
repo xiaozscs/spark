@@ -18,14 +18,15 @@
 package org.apache.spark.sql.execution.streaming
 
 import java.text.SimpleDateFormat
-import java.util.{Date, TimeZone, UUID}
+import java.util.{Date, UUID}
 
-import scala.collection.mutable
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.{EventTimeWatermark, LogicalPlan}
+import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.streaming.StreamingQueryListener.QueryProgressEvent
@@ -41,7 +42,7 @@ import org.apache.spark.util.Clock
 trait ProgressReporter extends Logging {
 
   case class ExecutionStats(
-    inputRows: Map[Source, Long],
+    inputRows: Map[BaseStreamingSource, Long],
     stateOperators: Seq[StateOperatorProgress],
     eventTimeStats: Map[String, String])
 
@@ -52,11 +53,11 @@ trait ProgressReporter extends Logging {
   protected def triggerClock: Clock
   protected def logicalPlan: LogicalPlan
   protected def lastExecution: QueryExecution
-  protected def newData: Map[Source, DataFrame]
+  protected def newData: Map[BaseStreamingSource, LogicalPlan]
   protected def availableOffsets: StreamProgress
   protected def committedOffsets: StreamProgress
-  protected def sources: Seq[Source]
-  protected def sink: Sink
+  protected def sources: Seq[BaseStreamingSource]
+  protected def sink: BaseStreamingSink
   protected def offsetSeqMetadata: OffsetSeqMetadata
   protected def currentBatchId: Long
   protected def sparkSession: SparkSession
@@ -82,7 +83,7 @@ trait ProgressReporter extends Logging {
   private var lastNoDataProgressEventTime = Long.MinValue
 
   private val timestampFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'") // ISO8601
-  timestampFormat.setTimeZone(TimeZone.getTimeZone("UTC"))
+  timestampFormat.setTimeZone(DateTimeUtils.getTimeZone("UTC"))
 
   @volatile
   protected var currentStatus: StreamingQueryStatus = {
@@ -180,6 +181,18 @@ trait ProgressReporter extends Logging {
     currentStatus = currentStatus.copy(isTriggerActive = false)
   }
 
+  /** Extract statistics about stateful operators from the executed query plan. */
+  private def extractStateOperatorMetrics(hasNewData: Boolean): Seq[StateOperatorProgress] = {
+    if (lastExecution == null) return Nil
+    // lastExecution could belong to one of the previous triggers if `!hasNewData`.
+    // Walking the plan again should be inexpensive.
+    lastExecution.executedPlan.collect {
+      case p if p.isInstanceOf[StateStoreWriter] =>
+        val progress = p.asInstanceOf[StateStoreWriter].getProgress()
+        if (hasNewData) progress else progress.copy(newNumRowsUpdated = 0)
+    }
+  }
+
   /** Extracts statistics from the most recent query execution. */
   private def extractExecutionStats(hasNewData: Boolean): ExecutionStats = {
     val hasEventTime = logicalPlan.collect { case e: EventTimeWatermark => e }.nonEmpty
@@ -187,8 +200,11 @@ trait ProgressReporter extends Logging {
       if (hasEventTime) Map("watermark" -> formatTimestamp(offsetSeqMetadata.batchWatermarkMs))
       else Map.empty[String, String]
 
+    // SPARK-19378: Still report metrics even though no data was processed while reporting progress.
+    val stateOperators = extractStateOperatorMetrics(hasNewData)
+
     if (!hasNewData) {
-      return ExecutionStats(Map.empty, Seq.empty, watermarkTimestamp)
+      return ExecutionStats(Map.empty, stateOperators, watermarkTimestamp)
     }
 
     // We want to associate execution plan leaves to sources that generate them, so that we match
@@ -209,12 +225,12 @@ trait ProgressReporter extends Logging {
     //
     // 3. For each source, we sum the metrics of the associated execution plan leaves.
     //
-    val logicalPlanLeafToSource = newData.flatMap { case (source, df) =>
-      df.logicalPlan.collectLeaves().map { leaf => leaf -> source }
+    val logicalPlanLeafToSource = newData.flatMap { case (source, logicalPlan) =>
+      logicalPlan.collectLeaves().map { leaf => leaf -> source }
     }
     val allLogicalPlanLeaves = lastExecution.logical.collectLeaves() // includes non-streaming
     val allExecPlanLeaves = lastExecution.executedPlan.collectLeaves()
-    val numInputRows: Map[Source, Long] =
+    val numInputRows: Map[BaseStreamingSource, Long] =
       if (allLogicalPlanLeaves.size == allExecPlanLeaves.size) {
         val execLeafToSource = allLogicalPlanLeaves.zip(allExecPlanLeaves).flatMap {
           case (lp, ep) => logicalPlanLeafToSource.get(lp).map { source => ep -> source }
@@ -237,23 +253,13 @@ trait ProgressReporter extends Logging {
         Map.empty
       }
 
-    // Extract statistics about stateful operators in the query plan.
-    val stateNodes = lastExecution.executedPlan.collect {
-      case p if p.isInstanceOf[StateStoreSaveExec] => p
-    }
-    val stateOperators = stateNodes.map { node =>
-      new StateOperatorProgress(
-        numRowsTotal = node.metrics.get("numTotalStateRows").map(_.value).getOrElse(0L),
-        numRowsUpdated = node.metrics.get("numUpdatedStateRows").map(_.value).getOrElse(0L))
-    }
-
     val eventTimeStats = lastExecution.executedPlan.collect {
       case e: EventTimeWatermarkExec if e.eventTimeStats.value.count > 0 =>
         val stats = e.eventTimeStats.value
         Map(
           "max" -> stats.max,
           "min" -> stats.min,
-          "avg" -> stats.avg).mapValues(formatTimestamp)
+          "avg" -> stats.avg.toLong).mapValues(formatTimestamp)
     }.headOption.getOrElse(Map.empty) ++ watermarkTimestamp
 
     ExecutionStats(numInputRows, stateOperators, eventTimeStats)

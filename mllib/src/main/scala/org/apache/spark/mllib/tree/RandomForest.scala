@@ -23,7 +23,7 @@ import scala.util.Try
 import org.apache.spark.annotation.Since
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.internal.Logging
-import org.apache.spark.ml.tree.{DecisionTreeModel => NewDTModel, RandomForestParams => NewRFParams}
+import org.apache.spark.ml.tree.{DecisionTreeModel => NewDTModel, TreeEnsembleParams => NewRFParams}
 import org.apache.spark.ml.tree.impl.{RandomForest => NewRandomForest}
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.tree.configuration.Algo._
@@ -172,7 +172,7 @@ object RandomForest extends Serializable with Logging {
   }
 
   /**
-   * Java-friendly API for [[org.apache.spark.mllib.tree.RandomForest$#trainClassifier]]
+   * Java-friendly API for `org.apache.spark.mllib.tree.RandomForest.trainClassifier`
    */
   @Since("1.2.0")
   def trainClassifier(
@@ -259,7 +259,7 @@ object RandomForest extends Serializable with Logging {
   }
 
   /**
-   * Java-friendly API for [[org.apache.spark.mllib.tree.RandomForest$#trainRegressor]]
+   * Java-friendly API for `org.apache.spark.mllib.tree.RandomForest.trainRegressor`
    */
   @Since("1.2.0")
   def trainRegressor(

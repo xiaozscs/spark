@@ -69,7 +69,7 @@ class GradientBoostedTrees private[spark] (
     val algo = boostingStrategy.treeStrategy.algo
     val (trees, treeWeights) = NewGBT.run(input.map { point =>
       NewLabeledPoint(point.label, point.features.asML)
-    }, boostingStrategy, seed.toLong)
+    }, boostingStrategy, seed.toLong, "all")
     new GradientBoostedTreesModel(algo, trees.map(_.toOld), treeWeights)
   }
 
@@ -101,7 +101,7 @@ class GradientBoostedTrees private[spark] (
       NewLabeledPoint(point.label, point.features.asML)
     }, validationInput.map { point =>
       NewLabeledPoint(point.label, point.features.asML)
-    }, boostingStrategy, seed.toLong)
+    }, boostingStrategy, seed.toLong, "all")
     new GradientBoostedTreesModel(algo, trees.map(_.toOld), treeWeights)
   }
 
@@ -136,7 +136,7 @@ object GradientBoostedTrees extends Logging {
   }
 
   /**
-   * Java-friendly API for [[org.apache.spark.mllib.tree.GradientBoostedTrees$#train]]
+   * Java-friendly API for `org.apache.spark.mllib.tree.GradientBoostedTrees.train`
    */
   @Since("1.2.0")
   def train(

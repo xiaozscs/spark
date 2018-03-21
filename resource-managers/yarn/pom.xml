@@ -20,7 +20,7 @@
   <parent>
     <groupId>org.apache.spark</groupId>
     <artifactId>spark-parent_2.11</artifactId>
-    <version>2.2.0-SNAPSHOT</version>
+    <version>2.4.0-SNAPSHOT</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
 
@@ -125,34 +125,18 @@
       <scope>test</scope>
     </dependency>
 
-     <!--
-    See SPARK-3710. hadoop-yarn-server-tests in Hadoop 2.2 fails to pull some needed
-    dependencies, so they need to be added manually for the tests to work.
-    -->
-
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-yarn-server-tests</artifactId>
       <classifier>tests</classifier>
       <scope>test</scope>
     </dependency>
+
     <dependency>
       <groupId>org.mockito</groupId>
       <artifactId>mockito-core</artifactId>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>org.mortbay.jetty</groupId>
-      <artifactId>jetty</artifactId>
-      <version>6.1.26</version>
-      <exclusions>
-       <exclusion>
-        <groupId>org.mortbay.jetty</groupId>
-         <artifactId>servlet-api</artifactId>
-       </exclusion>
-      </exclusions>
-      <scope>test</scope>
-     </dependency>
 
      <!--
        Jersey 1 dependencies only required for YARN integration testing. Creating a YARN cluster
@@ -183,29 +167,27 @@
        <version>${jersey-1.version}</version>
      </dependency>
 
-    <!--
-     Testing Hive reflection needs hive on the test classpath only.
-     It doesn't need the spark hive modules, so the -Phive flag is not checked.
-      -->
+    <!-- These dependencies are duplicated from core, because dependencies in the "provided"
+    scope are not transitive.-->
     <dependency>
       <groupId>${hive.group}</groupId>
       <artifactId>hive-exec</artifactId>
-      <scope>test</scope>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>${hive.group}</groupId>
       <artifactId>hive-metastore</artifactId>
-      <scope>test</scope>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.thrift</groupId>
       <artifactId>libthrift</artifactId>
-      <scope>test</scope>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.thrift</groupId>
       <artifactId>libfb303</artifactId>
-      <scope>test</scope>
+      <scope>provided</scope>
     </dependency>
   </dependencies>
 

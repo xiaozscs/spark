@@ -17,30 +17,171 @@
 
 # mllib_clustering.R: Provides methods for MLlib clustering algorithms integration
 
+#' S4 class that represents a BisectingKMeansModel
+#'
+#' @param jobj a Java object reference to the backing Scala BisectingKMeansModel
+#' @note BisectingKMeansModel since 2.2.0
+setClass("BisectingKMeansModel", representation(jobj = "jobj"))
+
 #' S4 class that represents a GaussianMixtureModel
 #'
 #' @param jobj a Java object reference to the backing Scala GaussianMixtureModel
-#' @export
 #' @note GaussianMixtureModel since 2.1.0
 setClass("GaussianMixtureModel", representation(jobj = "jobj"))
 
 #' S4 class that represents a KMeansModel
 #'
 #' @param jobj a Java object reference to the backing Scala KMeansModel
-#' @export
 #' @note KMeansModel since 2.0.0
 setClass("KMeansModel", representation(jobj = "jobj"))
 
 #' S4 class that represents an LDAModel
 #'
 #' @param jobj a Java object reference to the backing Scala LDAWrapper
-#' @export
 #' @note LDAModel since 2.1.0
 setClass("LDAModel", representation(jobj = "jobj"))
 
+#' Bisecting K-Means Clustering Model
+#'
+#' Fits a bisecting k-means clustering model against a SparkDataFrame.
+#' Users can call \code{summary} to print a summary of the fitted model, \code{predict} to make
+#' predictions on new data, and \code{write.ml}/\code{read.ml} to save/load fitted models.
+#'
+#' @param data a SparkDataFrame for training.
+#' @param formula a symbolic description of the model to be fitted. Currently only a few formula
+#'                operators are supported, including '~', '.', ':', '+', and '-'.
+#'                Note that the response variable of formula is empty in spark.bisectingKmeans.
+#' @param k the desired number of leaf clusters. Must be > 1.
+#'          The actual number could be smaller if there are no divisible leaf clusters.
+#' @param maxIter maximum iteration number.
+#' @param seed the random seed.
+#' @param minDivisibleClusterSize The minimum number of points (if greater than or equal to 1.0)
+#'                                or the minimum proportion of points (if less than 1.0) of a
+#'                                divisible cluster. Note that it is an expert parameter. The
+#'                                default value should be good enough for most cases.
+#' @param ... additional argument(s) passed to the method.
+#' @return \code{spark.bisectingKmeans} returns a fitted bisecting k-means model.
+#' @rdname spark.bisectingKmeans
+#' @aliases spark.bisectingKmeans,SparkDataFrame,formula-method
+#' @name spark.bisectingKmeans
+#' @examples
+#' \dontrun{
+#' sparkR.session()
+#' t <- as.data.frame(Titanic)
+#' df <- createDataFrame(t)
+#' model <- spark.bisectingKmeans(df, Class ~ Survived, k = 4)
+#' summary(model)
+#'
+#' # get fitted result from a bisecting k-means model
+#' fitted.model <- fitted(model, "centers")
+#' showDF(fitted.model)
+#'
+#' # fitted values on training data
+#' fitted <- predict(model, df)
+#' head(select(fitted, "Class", "prediction"))
+#'
+#' # save fitted model to input path
+#' path <- "path/to/model"
+#' write.ml(model, path)
+#'
+#' # can also read back the saved model and print
+#' savedModel <- read.ml(path)
+#' summary(savedModel)
+#' }
+#' @note spark.bisectingKmeans since 2.2.0
+#' @seealso \link{predict}, \link{read.ml}, \link{write.ml}
+setMethod("spark.bisectingKmeans", signature(data = "SparkDataFrame", formula = "formula"),
+          function(data, formula, k = 4, maxIter = 20, seed = NULL, minDivisibleClusterSize = 1.0) {
+            formula <- paste0(deparse(formula), collapse = "")
+            if (!is.null(seed)) {
+              seed <- as.character(as.integer(seed))
+            }
+            jobj <- callJStatic("org.apache.spark.ml.r.BisectingKMeansWrapper", "fit",
+                                data@sdf, formula, as.integer(k), as.integer(maxIter),
+                                seed, as.numeric(minDivisibleClusterSize))
+            new("BisectingKMeansModel", jobj = jobj)
+          })
+
+#  Get the summary of a bisecting k-means model
+
+#' @param object a fitted bisecting k-means model.
+#' @return \code{summary} returns summary information of the fitted model, which is a list.
+#'         The list includes the model's \code{k} (number of cluster centers),
+#'         \code{coefficients} (model cluster centers),
+#'         \code{size} (number of data points in each cluster), \code{cluster}
+#'         (cluster centers of the transformed data; cluster is NULL if is.loaded is TRUE),
+#'         and \code{is.loaded} (whether the model is loaded from a saved file).
+#' @rdname spark.bisectingKmeans
+#' @note summary(BisectingKMeansModel) since 2.2.0
+setMethod("summary", signature(object = "BisectingKMeansModel"),
+          function(object) {
+            jobj <- object@jobj
+            is.loaded <- callJMethod(jobj, "isLoaded")
+            features <- callJMethod(jobj, "features")
+            coefficients <- callJMethod(jobj, "coefficients")
+            k <- callJMethod(jobj, "k")
+            size <- callJMethod(jobj, "size")
+            coefficients <- t(matrix(coefficients, ncol = k))
+            colnames(coefficients) <- unlist(features)
+            rownames(coefficients) <- 1:k
+            cluster <- if (is.loaded) {
+              NULL
+            } else {
+              dataFrame(callJMethod(jobj, "cluster"))
+            }
+            list(k = k, coefficients = coefficients, size = size,
+            cluster = cluster, is.loaded = is.loaded)
+          })
+
+#  Predicted values based on a bisecting k-means model
+
+#' @param newData a SparkDataFrame for testing.
+#' @return \code{predict} returns the predicted values based on a bisecting k-means model.
+#' @rdname spark.bisectingKmeans
+#' @note predict(BisectingKMeansModel) since 2.2.0
+setMethod("predict", signature(object = "BisectingKMeansModel"),
+          function(object, newData) {
+            predict_internal(object, newData)
+          })
+
+#' Get fitted result from a bisecting k-means model
+#'
+#' Get fitted result from a bisecting k-means model.
+#' Note: A saved-loaded model does not support this method.
+#'
+#' @param method type of fitted results, \code{"centers"} for cluster centers
+#'        or \code{"classes"} for assigned classes.
+#' @return \code{fitted} returns a SparkDataFrame containing fitted values.
+#' @rdname spark.bisectingKmeans
+#' @note fitted since 2.2.0
+setMethod("fitted", signature(object = "BisectingKMeansModel"),
+          function(object, method = c("centers", "classes")) {
+            method <- match.arg(method)
+            jobj <- object@jobj
+            is.loaded <- callJMethod(jobj, "isLoaded")
+            if (is.loaded) {
+              stop("Saved-loaded bisecting k-means model does not support 'fitted' method")
+            } else {
+              dataFrame(callJMethod(jobj, "fitted", method))
+            }
+          })
+
+#  Save fitted MLlib model to the input path
+
+#' @param path the directory where the model is saved.
+#' @param overwrite overwrites or not if the output path already exists. Default is FALSE
+#'                  which means throw exception if the output path exists.
+#'
+#' @rdname spark.bisectingKmeans
+#' @note write.ml(BisectingKMeansModel, character) since 2.2.0
+setMethod("write.ml", signature(object = "BisectingKMeansModel", path = "character"),
+          function(object, path, overwrite = FALSE) {
+            write_internal(object, path, overwrite)
+          })
+
 #' Multivariate Gaussian Mixture Model (GMM)
 #'
-#' Fits multivariate gaussian mixture model against a Spark DataFrame, similarly to R's
+#' Fits multivariate gaussian mixture model against a SparkDataFrame, similarly to R's
 #' mvnormalmixEM(). Users can call \code{summary} to print a summary of the fitted model,
 #' \code{predict} to make predictions on new data, and \code{write.ml}/\code{read.ml}
 #' to save/load fitted models.
@@ -58,7 +199,6 @@ setClass("LDAModel", representation(jobj = "jobj"))
 #' @rdname spark.gaussianMixture
 #' @name spark.gaussianMixture
 #' @seealso mixtools: \url{https://cran.r-project.org/package=mixtools}
-#' @export
 #' @examples
 #' \dontrun{
 #' sparkR.session()
@@ -98,10 +238,9 @@ setMethod("spark.gaussianMixture", signature(data = "SparkDataFrame", formula = 
 #' @param object a fitted gaussian mixture model.
 #' @return \code{summary} returns summary of the fitted model, which is a list.
 #'         The list includes the model's \code{lambda} (lambda), \code{mu} (mu),
-#'         \code{sigma} (sigma), and \code{posterior} (posterior).
+#'         \code{sigma} (sigma), \code{loglik} (loglik), and \code{posterior} (posterior).
 #' @aliases spark.gaussianMixture,SparkDataFrame,formula-method
 #' @rdname spark.gaussianMixture
-#' @export
 #' @note summary(GaussianMixtureModel) since 2.1.0
 setMethod("summary", signature(object = "GaussianMixtureModel"),
           function(object) {
@@ -112,6 +251,7 @@ setMethod("summary", signature(object = "GaussianMixtureModel"),
             sigmaList <- callJMethod(jobj, "sigma")
             k <- callJMethod(jobj, "k")
             dim <- callJMethod(jobj, "dim")
+            loglik <- callJMethod(jobj, "logLikelihood")
             mu <- c()
             for (i in 1 : k) {
               start <- (i - 1) * dim + 1
@@ -129,7 +269,7 @@ setMethod("summary", signature(object = "GaussianMixtureModel"),
             } else {
               dataFrame(callJMethod(jobj, "posterior"))
             }
-            list(lambda = lambda, mu = mu, sigma = sigma,
+            list(lambda = lambda, mu = mu, sigma = sigma, loglik = loglik,
                  posterior = posterior, is.loaded = is.loaded)
           })
 
@@ -140,7 +280,6 @@ setMethod("summary", signature(object = "GaussianMixtureModel"),
 #'         "prediction".
 #' @aliases predict,GaussianMixtureModel,SparkDataFrame-method
 #' @rdname spark.gaussianMixture
-#' @export
 #' @note predict(GaussianMixtureModel) since 2.1.0
 setMethod("predict", signature(object = "GaussianMixtureModel"),
           function(object, newData) {
@@ -155,7 +294,6 @@ setMethod("predict", signature(object = "GaussianMixtureModel"),
 #'
 #' @aliases write.ml,GaussianMixtureModel,character-method
 #' @rdname spark.gaussianMixture
-#' @export
 #' @note write.ml(GaussianMixtureModel, character) since 2.1.0
 setMethod("write.ml", signature(object = "GaussianMixtureModel", path = "character"),
           function(object, path, overwrite = FALSE) {
@@ -164,7 +302,7 @@ setMethod("write.ml", signature(object = "GaussianMixtureModel", path = "charact
 
 #' K-Means Clustering Model
 #'
-#' Fits a k-means clustering model against a Spark DataFrame, similarly to R's kmeans().
+#' Fits a k-means clustering model against a SparkDataFrame, similarly to R's kmeans().
 #' Users can call \code{summary} to print a summary of the fitted model, \code{predict} to make
 #' predictions on new data, and \code{write.ml}/\code{read.ml} to save/load fitted models.
 #'
@@ -174,28 +312,28 @@ setMethod("write.ml", signature(object = "GaussianMixtureModel", path = "charact
 #'                Note that the response variable of formula is empty in spark.kmeans.
 #' @param k number of centers.
 #' @param maxIter maximum iteration number.
-#' @param initMode the initialization algorithm choosen to fit the model.
+#' @param initMode the initialization algorithm chosen to fit the model.
 #' @param seed the random seed for cluster initialization.
 #' @param initSteps the number of steps for the k-means|| initialization mode.
-#'                  This is an advanced setting, the default of 2 is almost always enough. Must be > 0.
+#'                  This is an advanced setting, the default of 2 is almost always enough.
+#'                  Must be > 0.
 #' @param tol convergence tolerance of iterations.
 #' @param ... additional argument(s) passed to the method.
 #' @return \code{spark.kmeans} returns a fitted k-means model.
 #' @rdname spark.kmeans
 #' @aliases spark.kmeans,SparkDataFrame,formula-method
 #' @name spark.kmeans
-#' @export
 #' @examples
 #' \dontrun{
 #' sparkR.session()
-#' data(iris)
-#' df <- createDataFrame(iris)
-#' model <- spark.kmeans(df, Sepal_Length ~ Sepal_Width, k = 4, initMode = "random")
+#' t <- as.data.frame(Titanic)
+#' df <- createDataFrame(t)
+#' model <- spark.kmeans(df, Class ~ Survived, k = 4, initMode = "random")
 #' summary(model)
 #'
 #' # fitted values on training data
 #' fitted <- predict(model, df)
-#' head(select(fitted, "Sepal_Length", "prediction"))
+#' head(select(fitted, "Class", "prediction"))
 #'
 #' # save fitted model to input path
 #' path <- "path/to/model"
@@ -225,12 +363,14 @@ setMethod("spark.kmeans", signature(data = "SparkDataFrame", formula = "formula"
 
 #' @param object a fitted k-means model.
 #' @return \code{summary} returns summary information of the fitted model, which is a list.
-#'         The list includes the model's \code{k} (number of cluster centers),
+#'         The list includes the model's \code{k} (the configured number of cluster centers),
 #'         \code{coefficients} (model cluster centers),
-#'         \code{size} (number of data points in each cluster), and \code{cluster}
-#'         (cluster centers of the transformed data).
+#'         \code{size} (number of data points in each cluster), \code{cluster}
+#'         (cluster centers of the transformed data), {is.loaded} (whether the model is loaded
+#'         from a saved file), and \code{clusterSize}
+#'         (the actual number of cluster centers. When using initMode = "random",
+#'         \code{clusterSize} may not equal to \code{k}).
 #' @rdname spark.kmeans
-#' @export
 #' @note summary(KMeansModel) since 2.0.0
 setMethod("summary", signature(object = "KMeansModel"),
           function(object) {
@@ -240,16 +380,17 @@ setMethod("summary", signature(object = "KMeansModel"),
             coefficients <- callJMethod(jobj, "coefficients")
             k <- callJMethod(jobj, "k")
             size <- callJMethod(jobj, "size")
-            coefficients <- t(matrix(coefficients, ncol = k))
+            clusterSize <- callJMethod(jobj, "clusterSize")
+            coefficients <- t(matrix(unlist(coefficients), ncol = clusterSize))
             colnames(coefficients) <- unlist(features)
-            rownames(coefficients) <- 1:k
+            rownames(coefficients) <- 1:clusterSize
             cluster <- if (is.loaded) {
               NULL
             } else {
               dataFrame(callJMethod(jobj, "cluster"))
             }
             list(k = k, coefficients = coefficients, size = size,
-                 cluster = cluster, is.loaded = is.loaded)
+                 cluster = cluster, is.loaded = is.loaded, clusterSize = clusterSize)
           })
 
 #  Predicted values based on a k-means model
@@ -257,7 +398,6 @@ setMethod("summary", signature(object = "KMeansModel"),
 #' @param newData a SparkDataFrame for testing.
 #' @return \code{predict} returns the predicted values based on a k-means model.
 #' @rdname spark.kmeans
-#' @export
 #' @note predict(KMeansModel) since 2.0.0
 setMethod("predict", signature(object = "KMeansModel"),
           function(object, newData) {
@@ -275,7 +415,6 @@ setMethod("predict", signature(object = "KMeansModel"),
 #' @param ... additional argument(s) passed to the method.
 #' @return \code{fitted} returns a SparkDataFrame containing fitted values.
 #' @rdname fitted
-#' @export
 #' @examples
 #' \dontrun{
 #' model <- spark.kmeans(trainingData, ~ ., 2)
@@ -302,7 +441,6 @@ setMethod("fitted", signature(object = "KMeansModel"),
 #'                  which means throw exception if the output path exists.
 #'
 #' @rdname spark.kmeans
-#' @export
 #' @note write.ml(KMeansModel, character) since 2.0.0
 setMethod("write.ml", signature(object = "KMeansModel", path = "character"),
           function(object, path, overwrite = FALSE) {
@@ -340,14 +478,9 @@ setMethod("write.ml", signature(object = "KMeansModel", path = "character"),
 #' @rdname spark.lda
 #' @aliases spark.lda,SparkDataFrame-method
 #' @seealso topicmodels: \url{https://cran.r-project.org/package=topicmodels}
-#' @export
 #' @examples
 #' \dontrun{
-#' # nolint start
-#' # An example "path/to/file" can be
-#' # paste0(Sys.getenv("SPARK_HOME"), "/data/mllib/sample_lda_libsvm_data.txt")
-#' # nolint end
-#' text <- read.df("path/to/file", source = "libsvm")
+#' text <- read.df("data/mllib/sample_lda_libsvm_data.txt", source = "libsvm")
 #' model <- spark.lda(data = text, optimizer = "em")
 #'
 #' # get a summary of the model
@@ -397,9 +530,15 @@ setMethod("spark.lda", signature(data = "SparkDataFrame"),
 #'         \item{\code{topics}}{top 10 terms and their weights of all topics}
 #'         \item{\code{vocabulary}}{whole terms of the training corpus, NULL if libsvm format file
 #'               used as training set}
+#'         \item{\code{trainingLogLikelihood}}{Log likelihood of the observed tokens in the
+#'               training set, given the current parameter estimates:
+#'               log P(docs | topics, topic distributions for docs, Dirichlet hyperparameters)
+#'               It is only for distributed LDA model (i.e., optimizer = "em")}
+#'         \item{\code{logPrior}}{Log probability of the current parameter estimate:
+#'               log P(topics, topic distributions for docs | Dirichlet hyperparameters)
+#'               It is only for distributed LDA model (i.e., optimizer = "em")}
 #' @rdname spark.lda
 #' @aliases summary,LDAModel-method
-#' @export
 #' @note summary(LDAModel) since 2.1.0
 setMethod("summary", signature(object = "LDAModel"),
           function(object, maxTermsPerTopic) {
@@ -413,11 +552,22 @@ setMethod("summary", signature(object = "LDAModel"),
             vocabSize <- callJMethod(jobj, "vocabSize")
             topics <- dataFrame(callJMethod(jobj, "topics", maxTermsPerTopic))
             vocabulary <- callJMethod(jobj, "vocabulary")
+            trainingLogLikelihood <- if (isDistributed) {
+              callJMethod(jobj, "trainingLogLikelihood")
+            } else {
+              NA
+            }
+            logPrior <- if (isDistributed) {
+              callJMethod(jobj, "logPrior")
+            } else {
+              NA
+            }
             list(docConcentration = unlist(docConcentration),
                  topicConcentration = topicConcentration,
                  logLikelihood = logLikelihood, logPerplexity = logPerplexity,
                  isDistributed = isDistributed, vocabSize = vocabSize,
-                 topics = topics, vocabulary = unlist(vocabulary))
+                 topics = topics, vocabulary = unlist(vocabulary),
+                 trainingLogLikelihood = trainingLogLikelihood, logPrior = logPrior)
           })
 
 #  Returns the log perplexity of a Latent Dirichlet Allocation model produced by \code{spark.lda}
@@ -426,7 +576,6 @@ setMethod("summary", signature(object = "LDAModel"),
 #'         perplexity of the training data if missing argument "data".
 #' @rdname spark.lda
 #' @aliases spark.perplexity,LDAModel-method
-#' @export
 #' @note spark.perplexity(LDAModel) since 2.1.0
 setMethod("spark.perplexity", signature(object = "LDAModel", data = "SparkDataFrame"),
           function(object, data) {
@@ -441,7 +590,6 @@ setMethod("spark.perplexity", signature(object = "LDAModel", data = "SparkDataFr
 #'         vectors named "topicDistribution".
 #' @rdname spark.lda
 #' @aliases spark.posterior,LDAModel,SparkDataFrame-method
-#' @export
 #' @note spark.posterior(LDAModel) since 2.1.0
 setMethod("spark.posterior", signature(object = "LDAModel", newData = "SparkDataFrame"),
           function(object, newData) {
@@ -456,7 +604,6 @@ setMethod("spark.posterior", signature(object = "LDAModel", newData = "SparkData
 #'
 #' @rdname spark.lda
 #' @aliases write.ml,LDAModel,character-method
-#' @export
 #' @seealso \link{read.ml}
 #' @note write.ml(LDAModel, character) since 2.1.0
 setMethod("write.ml", signature(object = "LDAModel", path = "character"),

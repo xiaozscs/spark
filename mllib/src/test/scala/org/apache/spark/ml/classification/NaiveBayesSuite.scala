@@ -20,7 +20,7 @@ package org.apache.spark.ml.classification
 import scala.util.Random
 
 import breeze.linalg.{DenseVector => BDV, Vector => BV}
-import breeze.stats.distributions.{Multinomial => BrzMultinomial}
+import breeze.stats.distributions.{Multinomial => BrzMultinomial, RandBasis => BrzRandBasis}
 
 import org.apache.spark.{SparkException, SparkFunSuite}
 import org.apache.spark.ml.classification.NaiveBayes.{Bernoulli, Multinomial}
@@ -28,12 +28,11 @@ import org.apache.spark.ml.classification.NaiveBayesSuite._
 import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.param.ParamsSuite
-import org.apache.spark.ml.util.{DefaultReadWriteTest, MLTestingUtils}
+import org.apache.spark.ml.util.{DefaultReadWriteTest, MLTest, MLTestingUtils}
 import org.apache.spark.ml.util.TestingUtils._
-import org.apache.spark.mllib.util.MLlibTestSparkContext
 import org.apache.spark.sql.{DataFrame, Dataset, Row}
 
-class NaiveBayesSuite extends SparkFunSuite with MLlibTestSparkContext with DefaultReadWriteTest {
+class NaiveBayesSuite extends MLTest with DefaultReadWriteTest {
 
   import testImplicits._
 
@@ -56,13 +55,13 @@ class NaiveBayesSuite extends SparkFunSuite with MLlibTestSparkContext with Defa
     bernoulliDataset = generateNaiveBayesInput(pi, theta, 100, seed, "bernoulli").toDF()
   }
 
-  def validatePrediction(predictionAndLabels: DataFrame): Unit = {
-    val numOfErrorPredictions = predictionAndLabels.collect().count {
+  def validatePrediction(predictionAndLabels: Seq[Row]): Unit = {
+    val numOfErrorPredictions = predictionAndLabels.filter {
       case Row(prediction: Double, label: Double) =>
         prediction != label
-    }
+    }.length
     // At least 80% of the predictions should be on.
-    assert(numOfErrorPredictions < predictionAndLabels.count() / 5)
+    assert(numOfErrorPredictions < predictionAndLabels.length / 5)
   }
 
   def validateModelFit(
@@ -92,10 +91,10 @@ class NaiveBayesSuite extends SparkFunSuite with MLlibTestSparkContext with Defa
   }
 
   def validateProbabilities(
-      featureAndProbabilities: DataFrame,
+      featureAndProbabilities: Seq[Row],
       model: NaiveBayesModel,
       modelType: String): Unit = {
-    featureAndProbabilities.collect().foreach {
+    featureAndProbabilities.foreach {
       case Row(features: Vector, probability: Vector) =>
         assert(probability.toArray.sum ~== 1.0 relTol 1.0e-10)
         val expected = modelType match {
@@ -149,16 +148,23 @@ class NaiveBayesSuite extends SparkFunSuite with MLlibTestSparkContext with Defa
 
     validateModelFit(pi, theta, model)
     assert(model.hasParent)
+    MLTestingUtils.checkCopyAndUids(nb, model)
 
     val validationDataset =
       generateNaiveBayesInput(piArray, thetaArray, nPoints, 17, "multinomial").toDF()
 
-    val predictionAndLabels = model.transform(validationDataset).select("prediction", "label")
-    validatePrediction(predictionAndLabels)
+    testTransformerByGlobalCheckFunc[(Double, Vector)](validationDataset, model,
+      "prediction", "label") { predictionAndLabels: Seq[Row] =>
+      validatePrediction(predictionAndLabels)
+    }
 
-    val featureAndProbabilities = model.transform(validationDataset)
-      .select("features", "probability")
-    validateProbabilities(featureAndProbabilities, model, "multinomial")
+    testTransformerByGlobalCheckFunc[(Double, Vector)](validationDataset, model,
+      "features", "probability") { featureAndProbabilities: Seq[Row] =>
+      validateProbabilities(featureAndProbabilities, model, "multinomial")
+    }
+
+    ProbabilisticClassifierSuite.testPredictMethods[
+      Vector, NaiveBayesModel](this, model, testDataset)
   }
 
   test("Naive Bayes with weighted samples") {
@@ -167,7 +173,7 @@ class NaiveBayesSuite extends SparkFunSuite with MLlibTestSparkContext with Defa
       assert(m1.pi ~== m2.pi relTol 0.01)
       assert(m1.theta ~== m2.theta relTol 0.01)
     }
-    val testParams = Seq(
+    val testParams = Seq[(String, Dataset[_])](
       ("bernoulli", bernoulliDataset),
       ("multinomial", dataset)
     )
@@ -178,7 +184,7 @@ class NaiveBayesSuite extends SparkFunSuite with MLlibTestSparkContext with Defa
       MLTestingUtils.testArbitrarilyScaledWeights[NaiveBayesModel, NaiveBayes](
         dataset.as[LabeledPoint], estimatorNoSmoothing, modelEquals)
       MLTestingUtils.testOutliersWithSmallWeights[NaiveBayesModel, NaiveBayes](
-        dataset.as[LabeledPoint], estimatorWithSmoothing, numClasses, modelEquals)
+        dataset.as[LabeledPoint], estimatorWithSmoothing, numClasses, modelEquals, outlierRatio = 3)
       MLTestingUtils.testOversamplingVsWeighting[NaiveBayesModel, NaiveBayes](
         dataset.as[LabeledPoint], estimatorWithSmoothing, modelEquals, seed)
     }
@@ -206,12 +212,18 @@ class NaiveBayesSuite extends SparkFunSuite with MLlibTestSparkContext with Defa
     val validationDataset =
       generateNaiveBayesInput(piArray, thetaArray, nPoints, 20, "bernoulli").toDF()
 
-    val predictionAndLabels = model.transform(validationDataset).select("prediction", "label")
-    validatePrediction(predictionAndLabels)
+    testTransformerByGlobalCheckFunc[(Double, Vector)](validationDataset, model,
+      "prediction", "label") { predictionAndLabels: Seq[Row] =>
+      validatePrediction(predictionAndLabels)
+    }
 
-    val featureAndProbabilities = model.transform(validationDataset)
-      .select("features", "probability")
-    validateProbabilities(featureAndProbabilities, model, "bernoulli")
+    testTransformerByGlobalCheckFunc[(Double, Vector)](validationDataset, model,
+      "features", "probability") { featureAndProbabilities: Seq[Row] =>
+      validateProbabilities(featureAndProbabilities, model, "bernoulli")
+    }
+
+    ProbabilisticClassifierSuite.testPredictMethods[
+      Vector, NaiveBayesModel](this, model, testDataset)
   }
 
   test("detect negative values") {
@@ -280,10 +292,11 @@ class NaiveBayesSuite extends SparkFunSuite with MLlibTestSparkContext with Defa
       assert(model.theta === model2.theta)
     }
     val nb = new NaiveBayes()
-    testEstimatorAndModelReadWrite(nb, dataset, NaiveBayesSuite.allParamSettings, checkModelData)
+    testEstimatorAndModelReadWrite(nb, dataset, NaiveBayesSuite.allParamSettings,
+      NaiveBayesSuite.allParamSettings, checkModelData)
   }
 
-  test("should support all NumericType labels and not support other types") {
+  test("should support all NumericType labels and weights, and not support other types") {
     val nb = new NaiveBayes()
     MLTestingUtils.checkNumericTypes[NaiveBayesModel, NaiveBayes](
       nb, spark) { (expected, actual) =>
@@ -324,9 +337,10 @@ object NaiveBayesSuite {
     sample: Int = 10): Seq[LabeledPoint] = {
     val D = theta(0).length
     val rnd = new Random(seed)
-    val _pi = pi.map(math.pow(math.E, _))
-    val _theta = theta.map(row => row.map(math.pow(math.E, _)))
+    val _pi = pi.map(math.exp)
+    val _theta = theta.map(row => row.map(math.exp))
 
+    implicit val rngForBrzMultinomial = BrzRandBasis.withSeed(seed)
     for (i <- 0 until nPoints) yield {
       val y = calcLabel(rnd.nextDouble(), _pi)
       val xi = modelType match {

@@ -17,12 +17,16 @@
 
 package org.apache.spark.sql.execution
 
+import java.util.Locale
+
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.catalog.{CatalogRelation, SessionCatalog}
+import org.apache.spark.sql.catalyst.catalog.{HiveTableRelation, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 
@@ -37,12 +41,10 @@ import org.apache.spark.sql.internal.SQLConf
  * 3. aggregate function on partition columns which have same result w or w/o DISTINCT keyword.
  *  e.g. SELECT col1, Max(col2) FROM tbl GROUP BY col1.
  */
-case class OptimizeMetadataOnlyQuery(
-    catalog: SessionCatalog,
-    conf: SQLConf) extends Rule[LogicalPlan] {
+case class OptimizeMetadataOnlyQuery(catalog: SessionCatalog) extends Rule[LogicalPlan] {
 
   def apply(plan: LogicalPlan): LogicalPlan = {
-    if (!conf.optimizerMetadataOnly) {
+    if (!SQLConf.get.optimizerMetadataOnly) {
       return plan
     }
 
@@ -81,8 +83,13 @@ case class OptimizeMetadataOnlyQuery(
   private def getPartitionAttrs(
       partitionColumnNames: Seq[String],
       relation: LogicalPlan): Seq[Attribute] = {
-    val partColumns = partitionColumnNames.map(_.toLowerCase).toSet
-    relation.output.filter(a => partColumns.contains(a.name.toLowerCase))
+    val attrMap = relation.output.map(a => a.name.toLowerCase(Locale.ROOT) -> a).toMap
+    partitionColumnNames.map { colName =>
+      attrMap.getOrElse(colName.toLowerCase(Locale.ROOT),
+        throw new AnalysisException(s"Unable to find the column `$colName` " +
+          s"given [${relation.output.map(_.name).mkString(", ")}]")
+      )
+    }
   }
 
   /**
@@ -95,16 +102,20 @@ case class OptimizeMetadataOnlyQuery(
     child transform {
       case plan if plan eq relation =>
         relation match {
-          case l @ LogicalRelation(fsRelation: HadoopFsRelation, _, _) =>
+          case l @ LogicalRelation(fsRelation: HadoopFsRelation, _, _, isStreaming) =>
             val partAttrs = getPartitionAttrs(fsRelation.partitionSchema.map(_.name), l)
-            val partitionData = fsRelation.location.listFiles(filters = Nil)
-            LocalRelation(partAttrs, partitionData.map(_.values))
+            val partitionData = fsRelation.location.listFiles(Nil, Nil)
+            LocalRelation(partAttrs, partitionData.map(_.values), isStreaming)
 
-          case relation: CatalogRelation =>
-            val partAttrs = getPartitionAttrs(relation.catalogTable.partitionColumnNames, relation)
-            val partitionData = catalog.listPartitions(relation.catalogTable.identifier).map { p =>
+          case relation: HiveTableRelation =>
+            val partAttrs = getPartitionAttrs(relation.tableMeta.partitionColumnNames, relation)
+            val caseInsensitiveProperties =
+              CaseInsensitiveMap(relation.tableMeta.storage.properties)
+            val timeZoneId = caseInsensitiveProperties.get(DateTimeUtils.TIMEZONE_OPTION)
+              .getOrElse(SQLConf.get.sessionLocalTimeZone)
+            val partitionData = catalog.listPartitions(relation.tableMeta.identifier).map { p =>
               InternalRow.fromSeq(partAttrs.map { attr =>
-                Cast(Literal(p.spec(attr.name)), attr.dataType).eval()
+                Cast(Literal(p.spec(attr.name)), attr.dataType, Option(timeZoneId)).eval()
               })
             }
             LocalRelation(partAttrs, partitionData)
@@ -127,23 +138,23 @@ case class OptimizeMetadataOnlyQuery(
   object PartitionedRelation {
 
     def unapply(plan: LogicalPlan): Option[(AttributeSet, LogicalPlan)] = plan match {
-      case l @ LogicalRelation(fsRelation: HadoopFsRelation, _, _)
+      case l @ LogicalRelation(fsRelation: HadoopFsRelation, _, _, _)
         if fsRelation.partitionSchema.nonEmpty =>
         val partAttrs = getPartitionAttrs(fsRelation.partitionSchema.map(_.name), l)
-        Some(AttributeSet(partAttrs), l)
+        Some((AttributeSet(partAttrs), l))
 
-      case relation: CatalogRelation if relation.catalogTable.partitionColumnNames.nonEmpty =>
-        val partAttrs = getPartitionAttrs(relation.catalogTable.partitionColumnNames, relation)
-        Some(AttributeSet(partAttrs), relation)
+      case relation: HiveTableRelation if relation.tableMeta.partitionColumnNames.nonEmpty =>
+        val partAttrs = getPartitionAttrs(relation.tableMeta.partitionColumnNames, relation)
+        Some((AttributeSet(partAttrs), relation))
 
       case p @ Project(projectList, child) if projectList.forall(_.deterministic) =>
         unapply(child).flatMap { case (partAttrs, relation) =>
-          if (p.references.subsetOf(partAttrs)) Some(p.outputSet, relation) else None
+          if (p.references.subsetOf(partAttrs)) Some((p.outputSet, relation)) else None
         }
 
       case f @ Filter(condition, child) if condition.deterministic =>
         unapply(child).flatMap { case (partAttrs, relation) =>
-          if (f.references.subsetOf(partAttrs)) Some(partAttrs, relation) else None
+          if (f.references.subsetOf(partAttrs)) Some((partAttrs, relation)) else None
         }
 
       case _ => None

@@ -122,14 +122,16 @@ class RandomForestRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: S
       super.getOldStrategy(categoricalFeatures, numClasses = 0, OldAlgo.Regression, getOldImpurity)
 
     val instr = Instrumentation.create(this, oldDataset)
-    instr.logParams(params: _*)
+    instr.logParams(labelCol, featuresCol, predictionCol, impurity, numTrees,
+      featureSubsetStrategy, maxDepth, maxBins, maxMemoryInMB, minInfoGain,
+      minInstancesPerNode, seed, subsamplingRate, cacheNodeIds, checkpointInterval)
 
     val trees = RandomForest
       .run(oldDataset, strategy, getNumTrees, getFeatureSubsetStrategy, getSeed, Some(instr))
       .map(_.asInstanceOf[DecisionTreeRegressionModel])
 
     val numFeatures = oldDataset.first().features.size
-    val m = new RandomForestRegressionModel(trees, numFeatures)
+    val m = new RandomForestRegressionModel(uid, trees, numFeatures)
     instr.logSuccess(m)
     m
   }
@@ -147,7 +149,7 @@ object RandomForestRegressor extends DefaultParamsReadable[RandomForestRegressor
   /** Accessor for supported featureSubsetStrategy settings: auto, all, onethird, sqrt, log2 */
   @Since("1.4.0")
   final val supportedFeatureSubsetStrategies: Array[String] =
-    RandomForestParams.supportedFeatureSubsetStrategies
+    TreeEnsembleParams.supportedFeatureSubsetStrategies
 
   @Since("2.0.0")
   override def load(path: String): RandomForestRegressor = super.load(path)

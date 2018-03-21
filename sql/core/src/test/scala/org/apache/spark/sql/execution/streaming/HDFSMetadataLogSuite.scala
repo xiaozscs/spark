@@ -26,10 +26,10 @@ import scala.util.Random
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
-import org.scalatest.concurrent.AsyncAssertions._
+import org.scalatest.concurrent.Waiters._
 import org.scalatest.time.SpanSugar._
 
-import org.apache.spark.{SparkConf, SparkFunSuite}
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.execution.streaming.FakeFileSystem._
 import org.apache.spark.sql.execution.streaming.HDFSMetadataLog.{FileContextManager, FileManager, FileSystemManager}
 import org.apache.spark.sql.test.SharedSQLContext
@@ -38,8 +38,8 @@ import org.apache.spark.util.UninterruptibleThread
 class HDFSMetadataLogSuite extends SparkFunSuite with SharedSQLContext {
 
   /** To avoid caching of FS objects */
-  override protected val sparkConf =
-    new SparkConf().set(s"spark.hadoop.fs.$scheme.impl.disable.cache", "true")
+  override protected def sparkConf =
+    super.sparkConf.set(s"spark.hadoop.fs.$scheme.impl.disable.cache", "true")
 
   private implicit def toOption[A](a: A): Option[A] = Option(a)
 
@@ -57,7 +57,7 @@ class HDFSMetadataLogSuite extends SparkFunSuite with SharedSQLContext {
     }
   }
 
-  testWithUninterruptibleThread("HDFSMetadataLog: basic") {
+  test("HDFSMetadataLog: basic") {
     withTempDir { temp =>
       val dir = new File(temp, "dir") // use non-existent directory to test whether log make the dir
       val metadataLog = new HDFSMetadataLog[String](spark, dir.getAbsolutePath)
@@ -82,8 +82,7 @@ class HDFSMetadataLogSuite extends SparkFunSuite with SharedSQLContext {
     }
   }
 
-  testWithUninterruptibleThread(
-    "HDFSMetadataLog: fallback from FileContext to FileSystem", quietly = true) {
+  testQuietly("HDFSMetadataLog: fallback from FileContext to FileSystem") {
     spark.conf.set(
       s"fs.$scheme.impl",
       classOf[FakeFileSystem].getName)
@@ -103,7 +102,7 @@ class HDFSMetadataLogSuite extends SparkFunSuite with SharedSQLContext {
     }
   }
 
-  testWithUninterruptibleThread("HDFSMetadataLog: purge") {
+  test("HDFSMetadataLog: purge") {
     withTempDir { temp =>
       val metadataLog = new HDFSMetadataLog[String](spark, temp.getAbsolutePath)
       assert(metadataLog.add(0, "batch0"))
@@ -128,7 +127,34 @@ class HDFSMetadataLogSuite extends SparkFunSuite with SharedSQLContext {
     }
   }
 
-  testWithUninterruptibleThread("HDFSMetadataLog: restart") {
+  test("HDFSMetadataLog: parseVersion") {
+    withTempDir { dir =>
+      val metadataLog = new HDFSMetadataLog[String](spark, dir.getAbsolutePath)
+      def assertLogFileMalformed(func: => Int): Unit = {
+        val e = intercept[IllegalStateException] { func }
+        assert(e.getMessage.contains(s"Log file was malformed: failed to read correct log version"))
+      }
+      assertLogFileMalformed { metadataLog.parseVersion("", 100) }
+      assertLogFileMalformed { metadataLog.parseVersion("xyz", 100) }
+      assertLogFileMalformed { metadataLog.parseVersion("v10.x", 100) }
+      assertLogFileMalformed { metadataLog.parseVersion("10", 100) }
+      assertLogFileMalformed { metadataLog.parseVersion("v0", 100) }
+      assertLogFileMalformed { metadataLog.parseVersion("v-10", 100) }
+
+      assert(metadataLog.parseVersion("v10", 10) === 10)
+      assert(metadataLog.parseVersion("v10", 100) === 10)
+
+      val e = intercept[IllegalStateException] { metadataLog.parseVersion("v200", 100) }
+      Seq(
+        "maximum supported log version is v100, but encountered v200",
+        "produced by a newer version of Spark and cannot be read by this version"
+      ).foreach { message =>
+        assert(e.getMessage.contains(message))
+      }
+    }
+  }
+
+  test("HDFSMetadataLog: restart") {
     withTempDir { temp =>
       val metadataLog = new HDFSMetadataLog[String](spark, temp.getAbsolutePath)
       assert(metadataLog.add(0, "batch0"))
@@ -232,6 +258,23 @@ class HDFSMetadataLogSuite extends SparkFunSuite with SharedSQLContext {
     intercept[FileAlreadyExistsException] {
       fm.rename(path2, path3)
     }
+  }
+
+  test("verifyBatchIds") {
+    import HDFSMetadataLog.verifyBatchIds
+    verifyBatchIds(Seq(1L, 2L, 3L), Some(1L), Some(3L))
+    verifyBatchIds(Seq(1L), Some(1L), Some(1L))
+    verifyBatchIds(Seq(1L, 2L, 3L), None, Some(3L))
+    verifyBatchIds(Seq(1L, 2L, 3L), Some(1L), None)
+    verifyBatchIds(Seq(1L, 2L, 3L), None, None)
+
+    intercept[IllegalStateException](verifyBatchIds(Seq(), Some(1L), None))
+    intercept[IllegalStateException](verifyBatchIds(Seq(), None, Some(1L)))
+    intercept[IllegalStateException](verifyBatchIds(Seq(), Some(1L), Some(1L)))
+    intercept[IllegalStateException](verifyBatchIds(Seq(2, 3, 4), Some(1L), None))
+    intercept[IllegalStateException](verifyBatchIds(Seq(2, 3, 4), None, Some(5L)))
+    intercept[IllegalStateException](verifyBatchIds(Seq(2, 3, 4), Some(1L), Some(5L)))
+    intercept[IllegalStateException](verifyBatchIds(Seq(1, 2, 4, 5), Some(1L), Some(5L)))
   }
 }
 

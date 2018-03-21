@@ -132,7 +132,7 @@ The `Pipeline.fit()` method is called on the original `DataFrame`, which has raw
 The `Tokenizer.transform()` method splits the raw text documents into words, adding a new column with words to the `DataFrame`.
 The `HashingTF.transform()` method converts the words column into feature vectors, adding a new column with those vectors to the `DataFrame`.
 Now, since `LogisticRegression` is an `Estimator`, the `Pipeline` first calls `LogisticRegression.fit()` to produce a `LogisticRegressionModel`.
-If the `Pipeline` had more stages, it would call the `LogisticRegressionModel`'s `transform()`
+If the `Pipeline` had more `Estimator`s, it would call the `LogisticRegressionModel`'s `transform()`
 method on the `DataFrame` before passing the `DataFrame` to the next stage.
 
 A `Pipeline` is an `Estimator`.
@@ -188,9 +188,36 @@ Parameters belong to specific instances of `Estimator`s and `Transformer`s.
 For example, if we have two `LogisticRegression` instances `lr1` and `lr2`, then we can build a `ParamMap` with both `maxIter` parameters specified: `ParamMap(lr1.maxIter -> 10, lr2.maxIter -> 20)`.
 This is useful if there are two algorithms with the `maxIter` parameter in a `Pipeline`.
 
-## Saving and Loading Pipelines
+## ML persistence: Saving and Loading Pipelines
 
-Often times it is worth it to save a model or a pipeline to disk for later use. In Spark 1.6, a model import/export functionality was added to the Pipeline API. Most basic transformers are supported as well as some of the more basic ML models. Please refer to the algorithm's API documentation to see if saving and loading is supported.
+Often times it is worth it to save a model or a pipeline to disk for later use. In Spark 1.6, a model import/export functionality was added to the Pipeline API.
+As of Spark 2.3, the DataFrame-based API in `spark.ml` and `pyspark.ml` has complete coverage.
+
+ML persistence works across Scala, Java and Python.  However, R currently uses a modified format,
+so models saved in R can only be loaded back in R; this should be fixed in the future and is
+tracked in [SPARK-15572](https://issues.apache.org/jira/browse/SPARK-15572).
+
+### Backwards compatibility for ML persistence
+
+In general, MLlib maintains backwards compatibility for ML persistence.  I.e., if you save an ML
+model or Pipeline in one version of Spark, then you should be able to load it back and use it in a
+future version of Spark.  However, there are rare exceptions, described below.
+
+Model persistence: Is a model or Pipeline saved using Apache Spark ML persistence in Spark
+version X loadable by Spark version Y?
+
+* Major versions: No guarantees, but best-effort.
+* Minor and patch versions: Yes; these are backwards compatible.
+* Note about the format: There are no guarantees for a stable persistence format, but model loading itself is designed to be backwards compatible.
+
+Model behavior: Does a model or Pipeline in Spark version X behave identically in Spark version Y?
+
+* Major versions: No guarantees, but best-effort.
+* Minor and patch versions: Identical behavior, except for bug fixes.
+
+For both model persistence and model behavior, any breaking changes across a minor version or patch
+version are reported in the Spark version release notes. If a breakage is not reported in release
+notes, then it should be treated as a bug to be fixed.
 
 # Code examples
 
@@ -206,7 +233,7 @@ This example covers the concepts of `Estimator`, `Transformer`, and `Param`.
 
 <div class="codetabs">
 
-<div data-lang="scala">
+<div data-lang="scala" markdown="1">
 
 Refer to the [`Estimator` Scala docs](api/scala/index.html#org.apache.spark.ml.Estimator),
 the [`Transformer` Scala docs](api/scala/index.html#org.apache.spark.ml.Transformer) and
@@ -215,7 +242,7 @@ the [`Params` Scala docs](api/scala/index.html#org.apache.spark.ml.param.Params)
 {% include_example scala/org/apache/spark/examples/ml/EstimatorTransformerParamExample.scala %}
 </div>
 
-<div data-lang="java">
+<div data-lang="java" markdown="1">
 
 Refer to the [`Estimator` Java docs](api/java/org/apache/spark/ml/Estimator.html),
 the [`Transformer` Java docs](api/java/org/apache/spark/ml/Transformer.html) and
@@ -224,7 +251,7 @@ the [`Params` Java docs](api/java/org/apache/spark/ml/param/Params.html) for det
 {% include_example java/org/apache/spark/examples/ml/JavaEstimatorTransformerParamExample.java %}
 </div>
 
-<div data-lang="python">
+<div data-lang="python" markdown="1">
 
 Refer to the [`Estimator` Python docs](api/python/pyspark.ml.html#pyspark.ml.Estimator),
 the [`Transformer` Python docs](api/python/pyspark.ml.html#pyspark.ml.Transformer) and
@@ -241,14 +268,14 @@ This example follows the simple text document `Pipeline` illustrated in the figu
 
 <div class="codetabs">
 
-<div data-lang="scala">
+<div data-lang="scala" markdown="1">
 
 Refer to the [`Pipeline` Scala docs](api/scala/index.html#org.apache.spark.ml.Pipeline) for details on the API.
 
 {% include_example scala/org/apache/spark/examples/ml/PipelineExample.scala %}
 </div>
 
-<div data-lang="java">
+<div data-lang="java" markdown="1">
 
 
 Refer to the [`Pipeline` Java docs](api/java/org/apache/spark/ml/Pipeline.html) for details on the API.
@@ -256,7 +283,7 @@ Refer to the [`Pipeline` Java docs](api/java/org/apache/spark/ml/Pipeline.html) 
 {% include_example java/org/apache/spark/examples/ml/JavaPipelineExample.java %}
 </div>
 
-<div data-lang="python">
+<div data-lang="python" markdown="1">
 
 Refer to the [`Pipeline` Python docs](api/python/pyspark.ml.html#pyspark.ml.Pipeline) for more details on the API.
 

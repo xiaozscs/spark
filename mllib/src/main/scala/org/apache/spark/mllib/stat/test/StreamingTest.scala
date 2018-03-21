@@ -54,7 +54,7 @@ case class BinarySample @Since("1.6.0") (
  * cumulative processing, using all batches seen so far.
  *
  * Different tests may be used for assessing statistical significance depending on assumptions
- * satisfied by data. For more details, see [[StreamingTestMethod]]. The `testMethod` specifies
+ * satisfied by data. For more details, see `StreamingTestMethod`. The `testMethod` specifies
  * which test will be used.
  *
  * Use a builder pattern to construct a streaming test in an application, for example:
@@ -133,7 +133,7 @@ class StreamingTest @Since("1.6.0") () extends Logging with Serializable {
       if (time.milliseconds > data.slideDuration.milliseconds * peacePeriod) {
         rdd
       } else {
-        data.context.sparkContext.parallelize(Seq())
+        data.context.sparkContext.parallelize(Seq.empty)
       }
     }
   }

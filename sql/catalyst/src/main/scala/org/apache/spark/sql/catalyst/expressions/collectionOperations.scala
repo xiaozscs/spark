@@ -20,7 +20,7 @@ import java.util.Comparator
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.TypeCheckResult
-import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodegenFallback, ExprCode}
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, CodegenFallback, ExprCode}
 import org.apache.spark.sql.catalyst.util.{ArrayData, GenericArrayData, MapData}
 import org.apache.spark.sql.types._
 
@@ -29,7 +29,7 @@ import org.apache.spark.sql.types._
  */
 @ExpressionDescription(
   usage = "_FUNC_(expr) - Returns the size of an array or a map. Returns -1 if null.",
-  extended = """
+  examples = """
     Examples:
       > SELECT _FUNC_(array('b', 'd', 'c', 'a'));
        4
@@ -54,7 +54,7 @@ case class Size(child: Expression) extends UnaryExpression with ExpectsInputType
     ev.copy(code = s"""
       boolean ${ev.isNull} = false;
       ${childGen.code}
-      ${ctx.javaType(dataType)} ${ev.value} = ${childGen.isNull} ? -1 :
+      ${CodeGenerator.javaType(dataType)} ${ev.value} = ${childGen.isNull} ? -1 :
         (${childGen.value}).numElements();""", isNull = "false")
   }
 }
@@ -64,7 +64,7 @@ case class Size(child: Expression) extends UnaryExpression with ExpectsInputType
  */
 @ExpressionDescription(
   usage = "_FUNC_(map) - Returns an unordered array containing the keys of the map.",
-  extended = """
+  examples = """
     Examples:
       > SELECT _FUNC_(map(1, 'a', 2, 'b'));
        [1,2]
@@ -92,7 +92,7 @@ case class MapKeys(child: Expression)
  */
 @ExpressionDescription(
   usage = "_FUNC_(map) - Returns an unordered array containing the values of the map.",
-  extended = """
+  examples = """
     Examples:
       > SELECT _FUNC_(map(1, 'a', 2, 'b'));
        ["a","b"]
@@ -122,7 +122,7 @@ case class MapValues(child: Expression)
 // scalastyle:off line.size.limit
 @ExpressionDescription(
   usage = "_FUNC_(array[, ascendingOrder]) - Sorts the input array in ascending or descending order according to the natural ordering of the array elements.",
-  extended = """
+  examples = """
     Examples:
       > SELECT _FUNC_(array('b', 'd', 'c', 'a'), true);
        ["a","b","c","d"]
@@ -217,7 +217,7 @@ case class SortArray(base: Expression, ascendingOrder: Expression)
  */
 @ExpressionDescription(
   usage = "_FUNC_(array, value) - Returns true if the array contains the value.",
-  extended = """
+  examples = """
     Examples:
       > SELECT _FUNC_(array(1, 2, 3), 2);
        true
@@ -228,10 +228,10 @@ case class ArrayContains(left: Expression, right: Expression)
   override def dataType: DataType = BooleanType
 
   override def inputTypes: Seq[AbstractDataType] = right.dataType match {
-    case NullType => Seq()
+    case NullType => Seq.empty
     case _ => left.dataType match {
       case n @ ArrayType(element, _) => Seq(n, element)
-      case _ => Seq()
+      case _ => Seq.empty
     }
   }
 
@@ -270,7 +270,7 @@ case class ArrayContains(left: Expression, right: Expression)
   override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
     nullSafeCodeGen(ctx, ev, (arr, value) => {
       val i = ctx.freshName("i")
-      val getValue = ctx.getValue(arr, right.dataType, i)
+      val getValue = CodeGenerator.getValue(arr, right.dataType, i)
       s"""
       for (int $i = 0; $i < $arr.numElements(); $i ++) {
         if ($arr.isNullAt($i)) {

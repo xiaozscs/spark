@@ -382,6 +382,42 @@ For example:
 
 </div>
 
+## Aggregations
+
+The [built-in DataFrames functions](api/scala/index.html#org.apache.spark.sql.functions$) provide common
+aggregations such as `count()`, `countDistinct()`, `avg()`, `max()`, `min()`, etc.
+While those functions are designed for DataFrames, Spark SQL also has type-safe versions for some of them in
+[Scala](api/scala/index.html#org.apache.spark.sql.expressions.scalalang.typed$) and
+[Java](api/java/org/apache/spark/sql/expressions/javalang/typed.html) to work with strongly typed Datasets.
+Moreover, users are not limited to the predefined aggregate functions and can create their own.
+
+### Untyped User-Defined Aggregate Functions
+Users have to extend the [UserDefinedAggregateFunction](api/scala/index.html#org.apache.spark.sql.expressions.UserDefinedAggregateFunction)
+abstract class to implement a custom untyped aggregate function. For example, a user-defined average
+can look like:
+
+<div class="codetabs">
+<div data-lang="scala"  markdown="1">
+{% include_example untyped_custom_aggregation scala/org/apache/spark/examples/sql/UserDefinedUntypedAggregation.scala%}
+</div>
+<div data-lang="java"  markdown="1">
+{% include_example untyped_custom_aggregation java/org/apache/spark/examples/sql/JavaUserDefinedUntypedAggregation.java%}
+</div>
+</div>
+
+### Type-Safe User-Defined Aggregate Functions
+
+User-defined aggregations for strongly typed Datasets revolve around the [Aggregator](api/scala/index.html#org.apache.spark.sql.expressions.Aggregator) abstract class.
+For example, a type-safe user-defined average can look like:
+
+<div class="codetabs">
+<div data-lang="scala"  markdown="1">
+{% include_example typed_custom_aggregation scala/org/apache/spark/examples/sql/UserDefinedTypedAggregation.scala%}
+</div>
+<div data-lang="java"  markdown="1">
+{% include_example typed_custom_aggregation java/org/apache/spark/examples/sql/JavaUserDefinedTypedAggregation.java%}
+</div>
+</div>
 
 # Data Sources
 
@@ -425,6 +461,8 @@ name (i.e., `org.apache.spark.sql.parquet`), but for built-in sources you can al
 names (`json`, `parquet`, `jdbc`, `orc`, `libsvm`, `csv`, `text`). DataFrames loaded from any data
 source type can be converted into other types using this syntax.
 
+To load a JSON file you can use:
+
 <div class="codetabs">
 <div data-lang="scala"  markdown="1">
 {% include_example manual_load_options scala/org/apache/spark/examples/sql/SQLDataSourceExample.scala %}
@@ -440,6 +478,27 @@ source type can be converted into other types using this syntax.
 
 <div data-lang="r"  markdown="1">
 {% include_example manual_load_options r/RSparkSQLExample.R %}
+</div>
+</div>
+
+To load a CSV file you can use:
+
+<div class="codetabs">
+<div data-lang="scala"  markdown="1">
+{% include_example manual_load_options_csv scala/org/apache/spark/examples/sql/SQLDataSourceExample.scala %}
+</div>
+
+<div data-lang="java"  markdown="1">
+{% include_example manual_load_options_csv java/org/apache/spark/examples/sql/JavaSQLDataSourceExample.java %}
+</div>
+
+<div data-lang="python"  markdown="1">
+{% include_example manual_load_options_csv python/sql/datasource.py %}
+</div>
+
+<div data-lang="r"  markdown="1">
+{% include_example manual_load_options_csv r/RSparkSQLExample.R %}
+
 </div>
 </div>
 
@@ -478,7 +537,7 @@ new data.
 <tr><th>Scala/Java</th><th>Any Language</th><th>Meaning</th></tr>
 <tr>
   <td><code>SaveMode.ErrorIfExists</code> (default)</td>
-  <td><code>"error"</code> (default)</td>
+  <td><code>"error" or "errorifexists"</code> (default)</td>
   <td>
     When saving a DataFrame to a data source, if data already exists,
     an exception is expected to be thrown.
@@ -525,7 +584,7 @@ be created by calling the `table` method on a `SparkSession` with the name of th
 For file-based data source, e.g. text, parquet, json, etc. you can specify a custom table path via the
 `path` option, e.g. `df.write.option("path", "/some/path").saveAsTable("t")`. When the table is dropped,
 the custom table path will not be removed and the table data is still there. If no custom table path is
-specifed, Spark will write data to a default table path under the warehouse directory. When the table is
+specified, Spark will write data to a default table path under the warehouse directory. When the table is
 dropped, the default table path will be removed too.
 
 Starting from Spark 2.1, persistent datasource tables have per-partition metadata stored in the Hive metastore. This brings several benefits:
@@ -534,6 +593,114 @@ Starting from Spark 2.1, persistent datasource tables have per-partition metadat
 - Hive DDLs such as `ALTER TABLE PARTITION ... SET LOCATION` are now available for tables created with the Datasource API.
 
 Note that partition information is not gathered by default when creating external datasource tables (those with a `path` option). To sync the partition information in the metastore, you can invoke `MSCK REPAIR TABLE`.
+
+### Bucketing, Sorting and Partitioning
+
+For file-based data source, it is also possible to bucket and sort or partition the output.
+Bucketing and sorting are applicable only to persistent tables:
+
+<div class="codetabs">
+
+<div data-lang="scala"  markdown="1">
+{% include_example write_sorting_and_bucketing scala/org/apache/spark/examples/sql/SQLDataSourceExample.scala %}
+</div>
+
+<div data-lang="java"  markdown="1">
+{% include_example write_sorting_and_bucketing java/org/apache/spark/examples/sql/JavaSQLDataSourceExample.java %}
+</div>
+
+<div data-lang="python"  markdown="1">
+{% include_example write_sorting_and_bucketing python/sql/datasource.py %}
+</div>
+
+<div data-lang="sql"  markdown="1">
+
+{% highlight sql %}
+
+CREATE TABLE users_bucketed_by_name(
+  name STRING,
+  favorite_color STRING,
+  favorite_numbers array<integer>
+) USING parquet
+CLUSTERED BY(name) INTO 42 BUCKETS;
+
+{% endhighlight %}
+
+</div>
+
+</div>
+
+while partitioning can be used with both `save` and `saveAsTable` when using the Dataset APIs.
+
+
+<div class="codetabs">
+
+<div data-lang="scala"  markdown="1">
+{% include_example write_partitioning scala/org/apache/spark/examples/sql/SQLDataSourceExample.scala %}
+</div>
+
+<div data-lang="java"  markdown="1">
+{% include_example write_partitioning java/org/apache/spark/examples/sql/JavaSQLDataSourceExample.java %}
+</div>
+
+<div data-lang="python"  markdown="1">
+{% include_example write_partitioning python/sql/datasource.py %}
+</div>
+
+<div data-lang="sql"  markdown="1">
+
+{% highlight sql %}
+
+CREATE TABLE users_by_favorite_color(
+  name STRING,
+  favorite_color STRING,
+  favorite_numbers array<integer>
+) USING csv PARTITIONED BY(favorite_color);
+
+{% endhighlight %}
+
+</div>
+
+</div>
+
+It is possible to use both partitioning and bucketing for a single table:
+
+<div class="codetabs">
+
+<div data-lang="scala"  markdown="1">
+{% include_example write_partition_and_bucket scala/org/apache/spark/examples/sql/SQLDataSourceExample.scala %}
+</div>
+
+<div data-lang="java"  markdown="1">
+{% include_example write_partition_and_bucket java/org/apache/spark/examples/sql/JavaSQLDataSourceExample.java %}
+</div>
+
+<div data-lang="python"  markdown="1">
+{% include_example write_partition_and_bucket python/sql/datasource.py %}
+</div>
+
+<div data-lang="sql"  markdown="1">
+
+{% highlight sql %}
+
+CREATE TABLE users_bucketed_and_partitioned(
+  name STRING,
+  favorite_color STRING,
+  favorite_numbers array<integer>
+) USING parquet
+PARTITIONED BY (favorite_color)
+CLUSTERED BY(name) SORTED BY (favorite_numbers) INTO 42 BUCKETS;
+
+{% endhighlight %}
+
+</div>
+
+</div>
+
+`partitionBy` creates a directory structure as described in the [Partition Discovery](#partition-discovery) section.
+Thus, it has limited applicability to columns with high cardinality. In contrast
+ `bucketBy` distributes
+data across a fixed number of buckets and can be used when a number of unique values is unbounded.
 
 ## Parquet Files
 
@@ -589,8 +756,9 @@ SELECT * FROM parquetTable
 
 Table partitioning is a common optimization approach used in systems like Hive. In a partitioned
 table, data are usually stored in different directories, with partitioning column values encoded in
-the path of each partition directory. The Parquet data source is now able to discover and infer
-partitioning information automatically. For example, we can store all our previously used
+the path of each partition directory. All built-in file sources (including Text/CSV/JSON/ORC/Parquet)
+are able to discover and infer partitioning information automatically.
+For example, we can store all our previously used
 population data into a partitioned table using the following directory structure, with two extra
 columns, `gender` and `country` as partitioning columns:
 
@@ -633,10 +801,11 @@ root
 {% endhighlight %}
 
 Notice that the data types of the partitioning columns are automatically inferred. Currently,
-numeric data types and string type are supported. Sometimes users may not want to automatically
-infer the data types of the partitioning columns. For these use cases, the automatic type inference
-can be configured by `spark.sql.sources.partitionColumnTypeInference.enabled`, which is default to
-`true`. When type inference is disabled, string type will be used for the partitioning columns.
+numeric data types, date, timestamp and string type are supported. Sometimes users may not want
+to automatically infer the data types of the partitioning columns. For these use cases, the
+automatic type inference can be configured by
+`spark.sql.sources.partitionColumnTypeInference.enabled`, which is default to `true`. When type
+inference is disabled, string type will be used for the partitioning columns.
 
 Starting from Spark 1.6.0, partition discovery only finds partitions under the given paths
 by default. For the above example, if users pass `path/to/table/gender=male` to either
@@ -746,6 +915,14 @@ spark.catalog.refreshTable("my_table")
 
 </div>
 
+<div data-lang="r"  markdown="1">
+
+{% highlight r %}
+refreshTable("my_table")
+{% endhighlight %}
+
+</div>
+
 <div data-lang="sql"  markdown="1">
 
 {% highlight sql %}
@@ -781,18 +958,13 @@ Configuration of Parquet can be done using the `setConf` method on `SparkSession
   </td>
 </tr>
 <tr>
-  <td><code>spark.sql.parquet.cacheMetadata</code></td>
-  <td>true</td>
-  <td>
-    Turns on caching of Parquet schema metadata. Can speed up querying of static data.
-  </td>
-</tr>
-<tr>
   <td><code>spark.sql.parquet.compression.codec</code></td>
   <td>snappy</td>
   <td>
-    Sets the compression codec use when writing Parquet files. Acceptable values include:
-    uncompressed, snappy, gzip, lzo.
+    Sets the compression codec used when writing Parquet files. If either `compression` or
+    `parquet.compression` is specified in the table-specific options/properties, the precedence would be
+    `compression`, `parquet.compression`, `spark.sql.parquet.compression.codec`. Acceptable values include:
+    none, uncompressed, snappy, gzip, lzo.
   </td>
 </tr>
 <tr>
@@ -832,31 +1004,56 @@ Configuration of Parquet can be done using the `setConf` method on `SparkSession
 </tr>
 </table>
 
+## ORC Files
+
+Since Spark 2.3, Spark supports a vectorized ORC reader with a new ORC file format for ORC files.
+To do that, the following configurations are newly added. The vectorized reader is used for the
+native ORC tables (e.g., the ones created using the clause `USING ORC`) when `spark.sql.orc.impl`
+is set to `native` and `spark.sql.orc.enableVectorizedReader` is set to `true`. For the Hive ORC
+serde tables (e.g., the ones created using the clause `USING HIVE OPTIONS (fileFormat 'ORC')`),
+the vectorized reader is used when `spark.sql.hive.convertMetastoreOrc` is also set to `true`.
+
+<table class="table">
+  <tr><th><b>Property Name</b></th><th><b>Default</b></th><th><b>Meaning</b></th></tr>
+  <tr>
+    <td><code>spark.sql.orc.impl</code></td>
+    <td><code>hive</code></td>
+    <td>The name of ORC implementation. It can be one of <code>native</code> and <code>hive</code>. <code>native</code> means the native ORC support that is built on Apache ORC 1.4. `hive` means the ORC library in Hive 1.2.1.</td>
+  </tr>
+  <tr>
+    <td><code>spark.sql.orc.enableVectorizedReader</code></td>
+    <td><code>true</code></td>
+    <td>Enables vectorized orc decoding in <code>native</code> implementation. If <code>false</code>, a new non-vectorized ORC reader is used in <code>native</code> implementation. For <code>hive</code> implementation, this is ignored.</td>
+  </tr>
+</table>
+
 ## JSON Datasets
 <div class="codetabs">
 
 <div data-lang="scala"  markdown="1">
 Spark SQL can automatically infer the schema of a JSON dataset and load it as a `Dataset[Row]`.
-This conversion can be done using `SparkSession.read.json()` on either an RDD of String,
+This conversion can be done using `SparkSession.read.json()` on either a `Dataset[String]`,
 or a JSON file.
 
 Note that the file that is offered as _a json file_ is not a typical JSON file. Each
 line must contain a separate, self-contained valid JSON object. For more information, please see
-[JSON Lines text format, also called newline-delimited JSON](http://jsonlines.org/). As a
-consequence, a regular multi-line JSON file will most often fail.
+[JSON Lines text format, also called newline-delimited JSON](http://jsonlines.org/).
+
+For a regular multi-line JSON file, set the `multiLine` option to `true`.
 
 {% include_example json_dataset scala/org/apache/spark/examples/sql/SQLDataSourceExample.scala %}
 </div>
 
 <div data-lang="java"  markdown="1">
 Spark SQL can automatically infer the schema of a JSON dataset and load it as a `Dataset<Row>`.
-This conversion can be done using `SparkSession.read().json()` on either an RDD of String,
+This conversion can be done using `SparkSession.read().json()` on either a `Dataset<String>`,
 or a JSON file.
 
 Note that the file that is offered as _a json file_ is not a typical JSON file. Each
 line must contain a separate, self-contained valid JSON object. For more information, please see
-[JSON Lines text format, also called newline-delimited JSON](http://jsonlines.org/). As a
-consequence, a regular multi-line JSON file will most often fail.
+[JSON Lines text format, also called newline-delimited JSON](http://jsonlines.org/).
+
+For a regular multi-line JSON file, set the `multiLine` option to `true`.
 
 {% include_example json_dataset java/org/apache/spark/examples/sql/JavaSQLDataSourceExample.java %}
 </div>
@@ -867,8 +1064,9 @@ This conversion can be done using `SparkSession.read.json` on a JSON file.
 
 Note that the file that is offered as _a json file_ is not a typical JSON file. Each
 line must contain a separate, self-contained valid JSON object. For more information, please see
-[JSON Lines text format, also called newline-delimited JSON](http://jsonlines.org/). As a
-consequence, a regular multi-line JSON file will most often fail.
+[JSON Lines text format, also called newline-delimited JSON](http://jsonlines.org/).
+
+For a regular multi-line JSON file, set the `multiLine` parameter to `True`.
 
 {% include_example json_dataset python/sql/datasource.py %}
 </div>
@@ -880,8 +1078,9 @@ files is a JSON object.
 
 Note that the file that is offered as _a json file_ is not a typical JSON file. Each
 line must contain a separate, self-contained valid JSON object. For more information, please see
-[JSON Lines text format, also called newline-delimited JSON](http://jsonlines.org/). As a
-consequence, a regular multi-line JSON file will most often fail.
+[JSON Lines text format, also called newline-delimited JSON](http://jsonlines.org/).
+
+For a regular multi-line JSON file, set a named parameter `multiLine` to `TRUE`.
 
 {% include_example json_dataset r/RSparkSQLExample.R %}
 
@@ -1015,7 +1214,7 @@ The following options can be used to configure the version of Hive that is used 
     <td><code>1.2.1</code></td>
     <td>
       Version of the Hive metastore. Available
-      options are <code>0.12.0</code> through <code>1.2.1</code>.
+      options are <code>0.12.0</code> through <code>2.3.2</code>.
     </td>
   </tr>
   <tr>
@@ -1077,7 +1276,7 @@ provide a ClassTag.
 (Note that this is different than the Spark SQL JDBC server, which allows other applications to
 run queries using Spark SQL).
 
-To get started you will need to include the JDBC driver for you particular database on the
+To get started you will need to include the JDBC driver for your particular database on the
 spark classpath. For example, to connect to postgres from the Spark Shell you would run the
 following command:
 
@@ -1089,7 +1288,7 @@ Tables from the remote database can be loaded as a DataFrame or Spark SQL tempor
 the Data Sources API. Users can specify the JDBC connection properties in the data source options.
 <code>user</code> and <code>password</code> are normally provided as connection properties for
 logging into the data sources. In addition to the connection properties, Spark also supports
-the following case-sensitive options:
+the following case-insensitive options:
 
 <table class="table">
   <tr><th>Property Name</th><th>Meaning</th></tr>
@@ -1161,6 +1360,13 @@ the following case-sensitive options:
    </tr>
 
   <tr>
+     <td><code>sessionInitStatement</code></td>
+     <td>
+       After each database session is opened to the remote DB and before starting to read data, this option executes a custom SQL statement (or a PL/SQL block). Use this to implement session initialization code. Example: <code>option("sessionInitStatement", """BEGIN execute immediate 'alter session set "_serial_direct_read"=true'; END;""")</code>
+     </td>
+  </tr>
+
+  <tr>
     <td><code>truncate</code></td>
     <td>
      This is a JDBC writer related option. When <code>SaveMode.Overwrite</code> is enabled, this option causes Spark to truncate an existing table instead of dropping and recreating it. This can be more efficient, and prevents the table metadata (e.g., indices) from being removed. However, it will not work in some cases, such as when the new data has a different schema. It defaults to <code>false</code>. This option applies only to writing.
@@ -1172,6 +1378,20 @@ the following case-sensitive options:
     <td>
      This is a JDBC writer related option. If specified, this option allows setting of database-specific table and partition options when creating a table (e.g., <code>CREATE TABLE t (name string) ENGINE=InnoDB.</code>). This option applies only to writing.
    </td>
+  </tr>
+
+  <tr>
+    <td><code>createTableColumnTypes</code></td>
+    <td>
+     The database column data types to use instead of the defaults, when creating the table. Data type information should be specified in the same format as CREATE TABLE columns syntax (e.g: <code>"name CHAR(64), comments VARCHAR(1024)")</code>. The specified types should be valid spark sql data types. This option applies only to writing.
+    </td>
+  </tr>
+
+  <tr>
+    <td><code>customSchema</code></td>
+    <td>
+     The custom schema to use for reading data from JDBC connectors. For example, <code>"id DECIMAL(38, 0), name STRING"</code>. You can also specify partial fields, and the others use the default type mapping. For example, <code>"id DECIMAL(38, 0)"</code>. The column names should be identical to the corresponding column names of JDBC table. Users can specify the corresponding data types of Spark SQL instead of using the defaults. This option applies only to reading.
+    </td>
   </tr>
 </table>
 
@@ -1226,9 +1446,9 @@ turning on some experimental options.
 
 ## Caching Data In Memory
 
-Spark SQL can cache tables using an in-memory columnar format by calling `spark.cacheTable("tableName")` or `dataFrame.cache()`.
+Spark SQL can cache tables using an in-memory columnar format by calling `spark.catalog.cacheTable("tableName")` or `dataFrame.cache()`.
 Then Spark SQL will scan only required columns and will automatically tune compression to minimize
-memory usage and GC pressure. You can call `spark.uncacheTable("tableName")` to remove the table from memory.
+memory usage and GC pressure. You can call `spark.catalog.uncacheTable("tableName")` to remove the table from memory.
 
 Configuration of in-memory caching can be done using the `setConf` method on `SparkSession` or by running
 `SET key=value` commands using SQL.
@@ -1306,6 +1526,64 @@ that these options will be deprecated in future release as more optimizations ar
   </tr>
 </table>
 
+## Broadcast Hint for SQL Queries
+
+The `BROADCAST` hint guides Spark to broadcast each specified table when joining them with another table or view.
+When Spark deciding the join methods, the broadcast hash join (i.e., BHJ) is preferred,
+even if the statistics is above the configuration `spark.sql.autoBroadcastJoinThreshold`.
+When both sides of a join are specified, Spark broadcasts the one having the lower statistics.
+Note Spark does not guarantee BHJ is always chosen, since not all cases (e.g. full outer join)
+support BHJ. When the broadcast nested loop join is selected, we still respect the hint.
+
+<div class="codetabs">
+
+<div data-lang="scala"  markdown="1">
+
+{% highlight scala %}
+import org.apache.spark.sql.functions.broadcast
+broadcast(spark.table("src")).join(spark.table("records"), "key").show()
+{% endhighlight %}
+
+</div>
+
+<div data-lang="java"  markdown="1">
+
+{% highlight java %}
+import static org.apache.spark.sql.functions.broadcast;
+broadcast(spark.table("src")).join(spark.table("records"), "key").show();
+{% endhighlight %}
+
+</div>
+
+<div data-lang="python"  markdown="1">
+
+{% highlight python %}
+from pyspark.sql.functions import broadcast
+broadcast(spark.table("src")).join(spark.table("records"), "key").show()
+{% endhighlight %}
+
+</div>
+
+<div data-lang="r"  markdown="1">
+
+{% highlight r %}
+src <- sql("SELECT * FROM src")
+records <- sql("SELECT * FROM records")
+head(join(broadcast(src), records, src$key == records$key))
+{% endhighlight %}
+
+</div>
+
+<div data-lang="sql"  markdown="1">
+
+{% highlight sql %}
+-- We accept BROADCAST, BROADCASTJOIN and MAPJOIN for broadcast hint
+SELECT /*+ BROADCAST(r) */ * FROM records r JOIN src s ON r.key = s.key
+{% endhighlight %}
+
+</div>
+</div>
+
 # Distributed SQL Engine
 
 Spark SQL can also act as a distributed query engine using its JDBC/ODBC or command-line interface.
@@ -1364,7 +1642,7 @@ Thrift JDBC server also supports sending thrift RPC messages over HTTP transport
 Use the following setting to enable HTTP mode as system property or in `hive-site.xml` file in `conf/`:
 
     hive.server2.transport.mode - Set this to value: http
-    hive.server2.thrift.http.port - HTTP port number fo listen on; default is 10001
+    hive.server2.thrift.http.port - HTTP port number to listen on; default is 10001
     hive.server2.http.endpoint - HTTP endpoint; default is cliservice
 
 To test, use beeline to connect to the JDBC/ODBC server in http mode with:
@@ -1385,7 +1663,312 @@ Configuration of Hive is done by placing your `hive-site.xml`, `core-site.xml` a
 You may run `./bin/spark-sql --help` for a complete list of all available
 options.
 
+# PySpark Usage Guide for Pandas with Apache Arrow
+
+## Apache Arrow in Spark
+
+Apache Arrow is an in-memory columnar data format that is used in Spark to efficiently transfer
+data between JVM and Python processes. This currently is most beneficial to Python users that
+work with Pandas/NumPy data. Its usage is not automatic and might require some minor
+changes to configuration or code to take full advantage and ensure compatibility. This guide will
+give a high-level description of how to use Arrow in Spark and highlight any differences when
+working with Arrow-enabled data.
+
+### Ensure PyArrow Installed
+
+If you install PySpark using pip, then PyArrow can be brought in as an extra dependency of the
+SQL module with the command `pip install pyspark[sql]`. Otherwise, you must ensure that PyArrow
+is installed and available on all cluster nodes. The current supported version is 0.8.0.
+You can install using pip or conda from the conda-forge channel. See PyArrow
+[installation](https://arrow.apache.org/docs/python/install.html) for details.
+
+## Enabling for Conversion to/from Pandas
+
+Arrow is available as an optimization when converting a Spark DataFrame to a Pandas DataFrame
+using the call `toPandas()` and when creating a Spark DataFrame from a Pandas DataFrame with
+`createDataFrame(pandas_df)`. To use Arrow when executing these calls, users need to first set
+the Spark configuration 'spark.sql.execution.arrow.enabled' to 'true'. This is disabled by default.
+
+In addition, optimizations enabled by 'spark.sql.execution.arrow.enabled' could fallback automatically
+to non-Arrow optimization implementation if an error occurs before the actual computation within Spark.
+This can be controlled by 'spark.sql.execution.arrow.fallback.enabled'.
+
+<div class="codetabs">
+<div data-lang="python" markdown="1">
+{% include_example dataframe_with_arrow python/sql/arrow.py %}
+</div>
+</div>
+
+Using the above optimizations with Arrow will produce the same results as when Arrow is not
+enabled. Note that even with Arrow, `toPandas()` results in the collection of all records in the
+DataFrame to the driver program and should be done on a small subset of the data. Not all Spark
+data types are currently supported and an error can be raised if a column has an unsupported type,
+see [Supported SQL Types](#supported-sql-arrow-types). If an error occurs during `createDataFrame()`,
+Spark will fall back to create the DataFrame without Arrow.
+
+## Pandas UDFs (a.k.a. Vectorized UDFs)
+
+Pandas UDFs are user defined functions that are executed by Spark using Arrow to transfer data and
+Pandas to work with the data. A Pandas UDF is defined using the keyword `pandas_udf` as a decorator
+or to wrap the function, no additional configuration is required. Currently, there are two types of
+Pandas UDF: Scalar and Grouped Map.
+
+### Scalar
+
+Scalar Pandas UDFs are used for vectorizing scalar operations. They can be used with functions such
+as `select` and `withColumn`. The Python function should take `pandas.Series` as inputs and return
+a `pandas.Series` of the same length. Internally, Spark will execute a Pandas UDF by splitting
+columns into batches and calling the function for each batch as a subset of the data, then
+concatenating the results together.
+
+The following example shows how to create a scalar Pandas UDF that computes the product of 2 columns.
+
+<div class="codetabs">
+<div data-lang="python" markdown="1">
+{% include_example scalar_pandas_udf python/sql/arrow.py %}
+</div>
+</div>
+
+### Grouped Map
+Grouped map Pandas UDFs are used with `groupBy().apply()` which implements the "split-apply-combine" pattern.
+Split-apply-combine consists of three steps:
+* Split the data into groups by using `DataFrame.groupBy`.
+* Apply a function on each group. The input and output of the function are both `pandas.DataFrame`. The
+  input data contains all the rows and columns for each group.
+* Combine the results into a new `DataFrame`.
+
+To use `groupBy().apply()`, the user needs to define the following:
+* A Python function that defines the computation for each group.
+* A `StructType` object or a string that defines the schema of the output `DataFrame`.
+
+Note that all data for a group will be loaded into memory before the function is applied. This can
+lead to out of memory exceptons, especially if the group sizes are skewed. The configuration for
+[maxRecordsPerBatch](#setting-arrow-batch-size) is not applied on groups and it is up to the user
+to ensure that the grouped data will fit into the available memory.
+
+The following example shows how to use `groupby().apply()` to subtract the mean from each value in the group.
+
+<div class="codetabs">
+<div data-lang="python" markdown="1">
+{% include_example grouped_map_pandas_udf python/sql/arrow.py %}
+</div>
+</div>
+
+For detailed usage, please see [`pyspark.sql.functions.pandas_udf`](api/python/pyspark.sql.html#pyspark.sql.functions.pandas_udf) and
+[`pyspark.sql.GroupedData.apply`](api/python/pyspark.sql.html#pyspark.sql.GroupedData.apply).
+
+## Usage Notes
+
+### Supported SQL Types
+
+Currently, all Spark SQL data types are supported by Arrow-based conversion except `BinaryType`, `MapType`,
+`ArrayType` of `TimestampType`, and nested `StructType`.
+
+### Setting Arrow Batch Size
+
+Data partitions in Spark are converted into Arrow record batches, which can temporarily lead to
+high memory usage in the JVM. To avoid possible out of memory exceptions, the size of the Arrow
+record batches can be adjusted by setting the conf "spark.sql.execution.arrow.maxRecordsPerBatch"
+to an integer that will determine the maximum number of rows for each batch. The default value is
+10,000 records per batch. If the number of columns is large, the value should be adjusted
+accordingly. Using this limit, each data partition will be made into 1 or more record batches for
+processing.
+
+### Timestamp with Time Zone Semantics
+
+Spark internally stores timestamps as UTC values, and timestamp data that is brought in without
+a specified time zone is converted as local time to UTC with microsecond resolution. When timestamp
+data is exported or displayed in Spark, the session time zone is used to localize the timestamp
+values. The session time zone is set with the configuration 'spark.sql.session.timeZone' and will
+default to the JVM system local time zone if not set. Pandas uses a `datetime64` type with nanosecond
+resolution, `datetime64[ns]`, with optional time zone on a per-column basis.
+
+When timestamp data is transferred from Spark to Pandas it will be converted to nanoseconds
+and each column will be converted to the Spark session time zone then localized to that time
+zone, which removes the time zone and displays values as local time. This will occur
+when calling `toPandas()` or `pandas_udf` with timestamp columns.
+
+When timestamp data is transferred from Pandas to Spark, it will be converted to UTC microseconds. This
+occurs when calling `createDataFrame` with a Pandas DataFrame or when returning a timestamp from a
+`pandas_udf`. These conversions are done automatically to ensure Spark will have data in the
+expected format, so it is not necessary to do any of these conversions yourself. Any nanosecond
+values will be truncated.
+
+Note that a standard UDF (non-Pandas) will load timestamp data as Python datetime objects, which is
+different than a Pandas timestamp. It is recommended to use Pandas time series functionality when
+working with timestamps in `pandas_udf`s to get the best performance, see
+[here](https://pandas.pydata.org/pandas-docs/stable/timeseries.html) for details.
+
 # Migration Guide
+
+## Upgrading From Spark SQL 2.3 to 2.4
+
+  - Since Spark 2.4, Spark maximizes the usage of a vectorized ORC reader for ORC files by default. To do that, `spark.sql.orc.impl` and `spark.sql.orc.filterPushdown` change their default values to `native` and `true` respectively.
+  - In PySpark, when Arrow optimization is enabled, previously `toPandas` just failed when Arrow optimization is unabled to be used whereas `createDataFrame` from Pandas DataFrame allowed the fallback to non-optimization. Now, both `toPandas` and `createDataFrame` from Pandas DataFrame allow the fallback by default, which can be switched off by `spark.sql.execution.arrow.fallback.enabled`.
+ - Since Spark 2.4, writing an empty dataframe to a directory launches at least one write task, even if physically the dataframe has no partition. This introduces a small behavior change that for self-describing file formats like Parquet and Orc, Spark creates a metadata-only file in the target directory when writing a 0-partition dataframe, so that schema inference can still work if users read that directory later. The new behavior is more reasonable and more consistent regarding writing empty dataframe.
+
+## Upgrading From Spark SQL 2.2 to 2.3
+
+  - Since Spark 2.3, the queries from raw JSON/CSV files are disallowed when the referenced columns only include the internal corrupt record column (named `_corrupt_record` by default). For example, `spark.read.schema(schema).json(file).filter($"_corrupt_record".isNotNull).count()` and `spark.read.schema(schema).json(file).select("_corrupt_record").show()`. Instead, you can cache or save the parsed results and then send the same query. For example, `val df = spark.read.schema(schema).json(file).cache()` and then `df.filter($"_corrupt_record".isNotNull).count()`.
+  - The `percentile_approx` function previously accepted numeric type input and output double type results. Now it supports date type, timestamp type and numeric types as input types. The result type is also changed to be the same as the input type, which is more reasonable for percentiles.
+  - Since Spark 2.3, the Join/Filter's deterministic predicates that are after the first non-deterministic predicates are also pushed down/through the child operators, if possible. In prior Spark versions, these filters are not eligible for predicate pushdown.
+  - Partition column inference previously found incorrect common type for different inferred types, for example, previously it ended up with double type as the common type for double type and date type. Now it finds the correct common type for such conflicts. The conflict resolution follows the table below:
+
+    <table class="table">
+      <tr>
+        <th>
+          <b>InputA \ InputB</b>
+        </th>
+        <th>
+          <b>NullType</b>
+        </th>
+        <th>
+          <b>IntegerType</b>
+        </th>
+        <th>
+          <b>LongType</b>
+        </th>
+        <th>
+          <b>DecimalType(38,0)*</b>
+        </th>
+        <th>
+          <b>DoubleType</b>
+        </th>
+        <th>
+          <b>DateType</b>
+        </th>
+        <th>
+          <b>TimestampType</b>
+        </th>
+        <th>
+          <b>StringType</b>
+        </th>
+      </tr>
+      <tr>
+        <td>
+          <b>NullType</b>
+        </td>
+        <td>NullType</td>
+        <td>IntegerType</td>
+        <td>LongType</td>
+        <td>DecimalType(38,0)</td>
+        <td>DoubleType</td>
+        <td>DateType</td>
+        <td>TimestampType</td>
+        <td>StringType</td>
+      </tr>
+      <tr>
+        <td>
+          <b>IntegerType</b>
+        </td>
+        <td>IntegerType</td>
+        <td>IntegerType</td>
+        <td>LongType</td>
+        <td>DecimalType(38,0)</td>
+        <td>DoubleType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+      </tr>
+      <tr>
+        <td>
+          <b>LongType</b>
+        </td>
+        <td>LongType</td>
+        <td>LongType</td>
+        <td>LongType</td>
+        <td>DecimalType(38,0)</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+      </tr>
+      <tr>
+        <td>
+          <b>DecimalType(38,0)*</b>
+        </td>
+        <td>DecimalType(38,0)</td>
+        <td>DecimalType(38,0)</td>
+        <td>DecimalType(38,0)</td>
+        <td>DecimalType(38,0)</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+      </tr>
+      <tr>
+        <td>
+          <b>DoubleType</b>
+        </td>
+        <td>DoubleType</td>
+        <td>DoubleType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>DoubleType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+      </tr>
+      <tr>
+        <td>
+          <b>DateType</b>
+        </td>
+        <td>DateType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>DateType</td>
+        <td>TimestampType</td>
+        <td>StringType</td>
+      </tr>
+      <tr>
+        <td>
+          <b>TimestampType</b>
+        </td>
+        <td>TimestampType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>TimestampType</td>
+        <td>TimestampType</td>
+        <td>StringType</td>
+      </tr>
+      <tr>
+        <td>
+          <b>StringType</b>
+        </td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+        <td>StringType</td>
+      </tr>
+    </table>
+
+    Note that, for <b>DecimalType(38,0)*</b>, the table above intentionally does not cover all other combinations of scales and precisions because currently we only infer decimal type like `BigInteger`/`BigInt`. For example, 1.1 is inferred as double type.
+  - In PySpark, now we need Pandas 0.19.2 or upper if you want to use Pandas related functionalities, such as `toPandas`, `createDataFrame` from Pandas DataFrame, etc.
+  - In PySpark, the behavior of timestamp values for Pandas related functionalities was changed to respect session timezone. If you want to use the old behavior, you need to set a configuration `spark.sql.execution.pandas.respectSessionTimeZone` to `False`. See [SPARK-22395](https://issues.apache.org/jira/browse/SPARK-22395) for details.
+  - In PySpark, `na.fill()` or `fillna` also accepts boolean and replaces nulls with booleans. In prior Spark versions, PySpark just ignores it and returns the original Dataset/DataFrame.
+  - Since Spark 2.3, when either broadcast hash join or broadcast nested loop join is applicable, we prefer to broadcasting the table that is explicitly specified in a broadcast hint. For details, see the section [Broadcast Hint](#broadcast-hint-for-sql-queries) and [SPARK-22489](https://issues.apache.org/jira/browse/SPARK-22489).
+  - Since Spark 2.3, when all inputs are binary, `functions.concat()` returns an output as binary. Otherwise, it returns as a string. Until Spark 2.3, it always returns as a string despite of input types. To keep the old behavior, set `spark.sql.function.concatBinaryAsString` to `true`.
+  - Since Spark 2.3, when all inputs are binary, SQL `elt()` returns an output as binary. Otherwise, it returns as a string. Until Spark 2.3, it always returns as a string despite of input types. To keep the old behavior, set `spark.sql.function.eltOutputAsString` to `true`.
+
+ - Since Spark 2.3, by default arithmetic operations between decimals return a rounded value if an exact representation is not possible (instead of returning NULL). This is compliant with SQL ANSI 2011 specification and Hive's new behavior introduced in Hive 2.2 (HIVE-15331). This involves the following changes
+    - The rules to determine the result type of an arithmetic operation have been updated. In particular, if the precision / scale needed are out of the range of available values, the scale is reduced up to 6, in order to prevent the truncation of the integer part of the decimals. All the arithmetic operations are affected by the change, ie. addition (`+`), subtraction (`-`), multiplication (`*`), division (`/`), remainder (`%`) and positive module (`pmod`).
+    - Literal values used in SQL operations are converted to DECIMAL with the exact precision and scale needed by them.
+    - The configuration `spark.sql.decimalOperations.allowPrecisionLoss` has been introduced. It defaults to `true`, which means the new behavior described here; if set to `false`, Spark uses previous rules, ie. it doesn't adjust the needed scale to represent the values and it returns NULL if an exact representation of the value is not possible.
+  - In PySpark, `df.replace` does not allow to omit `value` when `to_replace` is not a dictionary. Previously, `value` could be omitted in the other cases and had `None` by default, which is counterintuitive and error prone.
+
+## Upgrading From Spark SQL 2.1 to 2.2
+
+  - Spark 2.1.1 introduced a new configuration key: `spark.sql.hive.caseSensitiveInferenceMode`. It had a default setting of `NEVER_INFER`, which kept behavior identical to 2.1.0. However, Spark 2.2.0 changes this setting's default value to `INFER_AND_SAVE` to restore compatibility with reading Hive metastore tables whose underlying file schema have mixed-case column names. With the `INFER_AND_SAVE` configuration value, on first access Spark will perform schema inference on any Hive metastore table for which it has not already saved an inferred schema. Note that schema inference can be a very time consuming operation for tables with thousands of partitions. If compatibility with mixed-case column names is not a concern, you can safely set `spark.sql.hive.caseSensitiveInferenceMode` to `NEVER_INFER` to avoid the initial overhead of schema inference. Note that with the new default `INFER_AND_SAVE` setting, the results of the schema inference are saved as a metastore key for future use. Therefore, the initial schema inference occurs only at a table's first access.
+  
+  - Since Spark 2.2.1 and 2.3.0, the schema is always inferred at runtime when the data source tables have the columns that exist in both partition schema and data schema. The inferred schema does not have the partitioned columns. When reading the table, Spark respects the partition values of these overlapping columns instead of the values stored in the data source files. In 2.2.0 and 2.1.x release, the inferred schema is partitioned but the data of the table is invisible to users (i.e., the result set is empty).
 
 ## Upgrading From Spark SQL 2.0 to 2.1
 
@@ -1406,7 +1989,7 @@ options.
    transformations (e.g., `map`, `filter`, and `groupByKey`) and untyped transformations (e.g.,
    `select` and `groupBy`) are available on the Dataset class. Since compile-time type-safety in
    Python and R is not a language feature, the concept of Dataset does not apply to these languages’
-   APIs. Instead, `DataFrame` remains the primary programing abstraction, which is analogous to the
+   APIs. Instead, `DataFrame` remains the primary programming abstraction, which is analogous to the
    single-node data frame notion in these languages.
 
  - Dataset and DataFrame API `unionAll` has been deprecated and replaced by `union`
@@ -1420,6 +2003,9 @@ options.
       Dropping external tables will not remove the data. Users are not allowed to specify the location for Hive managed tables.
       Note that this is different from the Hive behavior.
     - As a result, `DROP TABLE` statements on those tables will not remove the data.
+
+ - `spark.sql.parquet.cacheMetadata` is no longer used.
+   See [SPARK-13664](https://issues.apache.org/jira/browse/SPARK-13664) for details.
 
 ## Upgrading From Spark SQL 1.5 to 1.6
 
@@ -1579,7 +2165,7 @@ Java and Python users will need to update their code.
 
 Prior to Spark 1.3 there were separate Java compatible classes (`JavaSQLContext` and `JavaSchemaRDD`)
 that mirrored the Scala API. In Spark 1.3 the Java API and Scala API have been unified. Users
-of either language should use `SQLContext` and `DataFrame`. In general theses classes try to
+of either language should use `SQLContext` and `DataFrame`. In general these classes try to
 use types that are usable from both languages (i.e. `Array` instead of language specific collections).
 In some cases where no common type exists (e.g., for passing in closures or Maps) function overloading
 is used instead.
@@ -1643,7 +2229,7 @@ referencing a singleton.
 Spark SQL is designed to be compatible with the Hive Metastore, SerDes and UDFs.
 Currently Hive SerDes and UDFs are based on Hive 1.2.1,
 and Spark SQL can be connected to different versions of Hive Metastore
-(from 0.12.0 to 1.2.1. Also see [Interacting with Different Versions of Hive Metastore] (#interacting-with-different-versions-of-hive-metastore)).
+(from 0.12.0 to 2.3.2. Also see [Interacting with Different Versions of Hive Metastore](#interacting-with-different-versions-of-hive-metastore)).
 
 #### Deploying in Existing Hive Warehouses
 
@@ -1743,6 +2329,31 @@ releases of Spark SQL.
 * Merge multiple small files for query results: if the result output contains multiple small files,
   Hive can optionally merge the small files into fewer large files to avoid overflowing the HDFS
   metadata. Spark SQL does not support that.
+
+**Hive UDF/UDTF/UDAF**
+
+Not all the APIs of the Hive UDF/UDTF/UDAF are supported by Spark SQL. Below are the unsupported APIs:
+
+* `getRequiredJars` and `getRequiredFiles` (`UDF` and `GenericUDF`) are functions to automatically
+  include additional resources required by this UDF.
+* `initialize(StructObjectInspector)` in `GenericUDTF` is not supported yet. Spark SQL currently uses
+  a deprecated interface `initialize(ObjectInspector[])` only.
+* `configure` (`GenericUDF`, `GenericUDTF`, and `GenericUDAFEvaluator`) is a function to initialize
+  functions with `MapredContext`, which is inapplicable to Spark.
+* `close` (`GenericUDF` and `GenericUDAFEvaluator`) is a function to release associated resources.
+  Spark SQL does not call this function when tasks finish.
+* `reset` (`GenericUDAFEvaluator`) is a function to re-initialize aggregation for reusing the same aggregation.
+  Spark SQL currently does not support the reuse of aggregation.
+* `getWindowingEvaluator` (`GenericUDAFEvaluator`) is a function to optimize aggregation by evaluating
+  an aggregate over a fixed window.
+
+### Incompatible Hive UDF
+
+Below are the scenarios in which Hive and Spark generate different results:
+
+* `SQRT(n)` If n < 0, Hive returns null, Spark SQL returns NaN.
+* `ACOS(n)` If n < -1 or n > 1, Hive returns null, Spark SQL returns NaN.
+* `ASIN(n)` If n < -1 or n > 1, Hive returns null, Spark SQL returns NaN.
 
 # Reference
 

@@ -140,6 +140,11 @@ class GBTRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: String)
   @Since("1.4.0")
   def setLossType(value: String): this.type = set(lossType, value)
 
+  /** @group setParam */
+  @Since("2.3.0")
+  override def setFeatureSubsetStrategy(value: String): this.type =
+    set(featureSubsetStrategy, value)
+
   override protected def train(dataset: Dataset[_]): GBTRegressionModel = {
     val categoricalFeatures: Map[Int, Int] =
       MetadataUtils.getCategoricalFeatures(dataset.schema($(featuresCol)))
@@ -148,11 +153,13 @@ class GBTRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: String)
     val boostingStrategy = super.getOldBoostingStrategy(categoricalFeatures, OldAlgo.Regression)
 
     val instr = Instrumentation.create(this, oldDataset)
-    instr.logParams(params: _*)
+    instr.logParams(labelCol, featuresCol, predictionCol, impurity, lossType,
+      maxDepth, maxBins, maxIter, maxMemoryInMB, minInfoGain, minInstancesPerNode,
+      seed, stepSize, subsamplingRate, cacheNodeIds, checkpointInterval, featureSubsetStrategy)
     instr.logNumFeatures(numFeatures)
 
     val (baseLearners, learnerWeights) = GradientBoostedTrees.run(oldDataset, boostingStrategy,
-      $(seed))
+      $(seed), $(featureSubsetStrategy))
     val m = new GBTRegressionModel(uid, baseLearners, learnerWeights, numFeatures)
     instr.logSuccess(m)
     m

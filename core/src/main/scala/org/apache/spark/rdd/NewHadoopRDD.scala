@@ -21,6 +21,7 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.{Date, Locale}
 
+import scala.collection.JavaConverters.asScalaBufferConverter
 import scala.reflect.ClassTag
 
 import org.apache.hadoop.conf.{Configurable, Configuration}
@@ -34,7 +35,7 @@ import org.apache.spark._
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
-import org.apache.spark.internal.config.IGNORE_CORRUPT_FILES
+import org.apache.spark.internal.config._
 import org.apache.spark.rdd.NewHadoopRDD.NewHadoopMapPartitionsWithSplitRDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.{SerializableConfiguration, ShutdownHookManager}
@@ -89,6 +90,8 @@ class NewHadoopRDD[K, V](
 
   private val ignoreCorruptFiles = sparkContext.conf.get(IGNORE_CORRUPT_FILES)
 
+  private val ignoreEmptySplits = sparkContext.conf.get(HADOOP_RDD_IGNORE_EMPTY_SPLITS)
+
   def getConf: Configuration = {
     val conf: Configuration = confBroadcast.value.value
     if (shouldCloneJobConf) {
@@ -121,8 +124,12 @@ class NewHadoopRDD[K, V](
         configurable.setConf(_conf)
       case _ =>
     }
-    val jobContext = new JobContextImpl(_conf, jobId)
-    val rawSplits = inputFormat.getSplits(jobContext).toArray
+    val allRowSplits = inputFormat.getSplits(new JobContextImpl(_conf, jobId)).asScala
+    val rawSplits = if (ignoreEmptySplits) {
+      allRowSplits.filter(_.getLength > 0)
+    } else {
+      allRowSplits
+    }
     val result = new Array[Partition](rawSplits.size)
     for (i <- 0 until rawSplits.size) {
       result(i) = new NewHadoopPartition(id, i, rawSplits(i).asInstanceOf[InputSplit with Writable])
@@ -152,11 +159,11 @@ class NewHadoopRDD[K, V](
       private val getBytesReadCallback: Option[() => Long] =
         split.serializableHadoopSplit.value match {
           case _: FileSplit | _: CombineFileSplit =>
-            SparkHadoopUtil.get.getFSBytesReadOnThreadCallback()
+            Some(SparkHadoopUtil.get.getFSBytesReadOnThreadCallback())
           case _ => None
         }
 
-      // For Hadoop 2.5+, we get our input bytes from thread-local Hadoop FileSystem statistics.
+      // We get our input bytes from thread-local Hadoop FileSystem statistics.
       // If we do a coalesce, however, we are likely to compute multiple partitions in the same
       // task and in the same thread, in which case we need to avoid override values written by
       // previous partitions (SPARK-13071).
@@ -191,7 +198,13 @@ class NewHadoopRDD[K, V](
         }
 
       // Register an on-task-completion callback to close the input stream.
-      context.addTaskCompletionListener(context => close())
+      context.addTaskCompletionListener { context =>
+        // Update the bytesRead before closing is to make sure lingering bytesRead statistics in
+        // this thread get correctly added.
+        updateBytesRead()
+        close()
+      }
+
       private var havePair = false
       private var recordsSinceMetricsUpdate = 0
 
@@ -231,13 +244,9 @@ class NewHadoopRDD[K, V](
         (reader.getCurrentKey, reader.getCurrentValue)
       }
 
-      private def close() {
+      private def close(): Unit = {
         if (reader != null) {
           InputFileBlockHolder.unset()
-          // Close the reader and release it. Note: it's very important that we don't close the
-          // reader more than once, since that exposes us to MAPREDUCE-5918 when running against
-          // Hadoop 1.x and older Hadoop 2.x releases. That bug can lead to non-deterministic
-          // corruption issues when reading compressed input.
           try {
             reader.close()
           } catch {
@@ -277,18 +286,7 @@ class NewHadoopRDD[K, V](
 
   override def getPreferredLocations(hsplit: Partition): Seq[String] = {
     val split = hsplit.asInstanceOf[NewHadoopPartition].serializableHadoopSplit.value
-    val locs = HadoopRDD.SPLIT_INFO_REFLECTIONS match {
-      case Some(c) =>
-        try {
-          val infos = c.newGetLocationInfo.invoke(split).asInstanceOf[Array[AnyRef]]
-          HadoopRDD.convertSplitLocationInfo(infos)
-        } catch {
-          case e : Exception =>
-            logDebug("Failed to use InputSplit#getLocationInfo.", e)
-            None
-        }
-      case None => None
-    }
+    val locs = HadoopRDD.convertSplitLocationInfo(split.getLocationInfo)
     locs.getOrElse(split.getLocations.filter(_ != "localhost"))
   }
 

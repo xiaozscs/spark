@@ -72,6 +72,13 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
    * Generates the code for ordering based on the given order.
    */
   def genComparisons(ctx: CodegenContext, ordering: Seq[SortOrder]): String = {
+    val oldInputRow = ctx.INPUT_ROW
+    val oldCurrentVars = ctx.currentVars
+    val inputRow = "i"
+    ctx.INPUT_ROW = inputRow
+    // to use INPUT_ROW we must make sure currentVars is null
+    ctx.currentVars = null
+
     val comparisons = ordering.map { order =>
       val eval = order.child.genCode(ctx)
       val asc = order.isAscending
@@ -82,7 +89,7 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
       s"""
           ${ctx.INPUT_ROW} = a;
           boolean $isNullA;
-          ${ctx.javaType(order.child.dataType)} $primitiveA;
+          ${CodeGenerator.javaType(order.child.dataType)} $primitiveA;
           {
             ${eval.code}
             $isNullA = ${eval.isNull};
@@ -90,7 +97,7 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
           }
           ${ctx.INPUT_ROW} = b;
           boolean $isNullB;
-          ${ctx.javaType(order.child.dataType)} $primitiveB;
+          ${CodeGenerator.javaType(order.child.dataType)} $primitiveB;
           {
             ${eval.code}
             $isNullB = ${eval.isNull};
@@ -119,7 +126,7 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
       """
     }
 
-    ctx.splitExpressions(
+    val code = ctx.splitExpressions(
       expressions = comparisons,
       funcName = "compare",
       arguments = Seq(("InternalRow", "a"), ("InternalRow", "b")),
@@ -142,6 +149,14 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
           """
         }.mkString
       })
+    ctx.currentVars = oldCurrentVars
+    ctx.INPUT_ROW = oldInputRow
+    // make sure INPUT_ROW is declared even if splitExpressions
+    // returns an inlined block
+    s"""
+       |InternalRow $inputRow = null;
+       |$code
+     """.stripMargin
   }
 
   protected def create(ordering: Seq[SortOrder]): BaseOrdering = {
@@ -162,20 +177,20 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
           ${ctx.initMutableStates()}
         }
 
-        ${ctx.declareAddedFunctions()}
-
         public int compare(InternalRow a, InternalRow b) {
-          InternalRow ${ctx.INPUT_ROW} = null;  // Holds current row being evaluated.
           $comparisons
           return 0;
         }
+
+        ${ctx.declareAddedFunctions()}
       }"""
 
     val code = CodeFormatter.stripOverlappingComments(
       new CodeAndComment(codeBody, ctx.getPlaceHolderToComments()))
     logDebug(s"Generated Ordering by ${ordering.mkString(",")}:\n${CodeFormatter.format(code)}")
 
-    CodeGenerator.compile(code).generate(ctx.references.toArray).asInstanceOf[BaseOrdering]
+    val (clazz, _) = CodeGenerator.compile(code)
+    clazz.generate(ctx.references.toArray).asInstanceOf[BaseOrdering]
   }
 }
 

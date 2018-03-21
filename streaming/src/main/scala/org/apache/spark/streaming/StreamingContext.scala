@@ -435,13 +435,12 @@ class StreamingContext private[streaming] (
     conf.setInt(FixedLengthBinaryInputFormat.RECORD_LENGTH_PROPERTY, recordLength)
     val br = fileStream[LongWritable, BytesWritable, FixedLengthBinaryInputFormat](
       directory, FileInputDStream.defaultFilter: Path => Boolean, newFilesOnly = true, conf)
-    val data = br.map { case (k, v) =>
-      val bytes = v.getBytes
+    br.map { case (k, v) =>
+      val bytes = v.copyBytes()
       require(bytes.length == recordLength, "Byte array does not have correct length. " +
         s"${bytes.length} did not equal recordLength: $recordLength")
       bytes
     }
-    data
   }
 
   /**
@@ -459,7 +458,7 @@ class StreamingContext private[streaming] (
       queue: Queue[RDD[T]],
       oneAtATime: Boolean = true
     ): InputDStream[T] = {
-    queueStream(queue, oneAtATime, sc.makeRDD(Seq[T](), 1))
+    queueStream(queue, oneAtATime, sc.makeRDD(Seq.empty[T], 1))
   }
 
   /**
@@ -597,7 +596,7 @@ class StreamingContext private[streaming] (
         }
         logDebug("Adding shutdown hook") // force eager creation of logger
         shutdownHookRef = ShutdownHookManager.addShutdownHook(
-          StreamingContext.SHUTDOWN_HOOK_PRIORITY)(stopOnShutdown)
+          StreamingContext.SHUTDOWN_HOOK_PRIORITY)(() => stopOnShutdown())
         // Registering Streaming Metrics at the start of the StreamingContext
         assert(env.metricsSystem != null)
         env.metricsSystem.registerSource(streamingSource)
@@ -660,8 +659,7 @@ class StreamingContext private[streaming] (
   def stop(stopSparkContext: Boolean, stopGracefully: Boolean): Unit = {
     var shutdownHookRefToRemove: AnyRef = null
     if (LiveListenerBus.withinListenerThread.value) {
-      throw new SparkException(
-        s"Cannot stop StreamingContext within listener thread of ${LiveListenerBus.name}")
+      throw new SparkException(s"Cannot stop StreamingContext within listener bus thread.")
     }
     synchronized {
       // The state should always be Stopped after calling `stop()`, even if we haven't started yet

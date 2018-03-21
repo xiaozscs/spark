@@ -52,7 +52,7 @@ import org.apache.spark.sql.execution.SparkPlan
 object FileSourceStrategy extends Strategy with Logging {
   def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
     case PhysicalOperation(projects, filters,
-      l @ LogicalRelation(fsRelation: HadoopFsRelation, _, table)) =>
+      l @ LogicalRelation(fsRelation: HadoopFsRelation, _, table, _)) =>
       // Filters on this relation fall into four categories based on where we can use them to avoid
       // reading unneeded data:
       //  - partition keys only - used to prune directories to read
@@ -62,7 +62,7 @@ object FileSourceStrategy extends Strategy with Logging {
       val filterSet = ExpressionSet(filters)
 
       // The attribute name of predicate could be different than the one in schema in case of
-      // case insensitive, we should change them to match the one in schema, so we donot need to
+      // case insensitive, we should change them to match the one in schema, so we do not need to
       // worry about case sensitivity anymore.
       val normalizedFilters = filters.map { e =>
         e transform {
@@ -100,9 +100,6 @@ object FileSourceStrategy extends Strategy with Logging {
       val outputSchema = readDataColumns.toStructType
       logInfo(s"Output Data Schema: ${outputSchema.simpleString(5)}")
 
-      val pushedDownFilters = dataFilters.flatMap(DataSourceStrategy.translateFilter)
-      logInfo(s"Pushed Filters: ${pushedDownFilters.mkString(",")}")
-
       val outputAttributes = readDataColumns ++ partitionColumns
 
       val scan =
@@ -111,7 +108,7 @@ object FileSourceStrategy extends Strategy with Logging {
           outputAttributes,
           outputSchema,
           partitionKeyFilters.toSeq,
-          pushedDownFilters,
+          dataFilters,
           table.map(_.identifier))
 
       val afterScanFilter = afterScanFilters.toSeq.reduceOption(expressions.And)
