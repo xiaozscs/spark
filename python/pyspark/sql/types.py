@@ -35,7 +35,6 @@ from py4j.java_gateway import JavaClass
 
 from pyspark import SparkContext
 from pyspark.serializers import CloudPickleSerializer
-from pyspark.util import _exception_message
 
 __all__ = [
     "DataType", "NullType", "StringType", "BinaryType", "BooleanType", "DateType",
@@ -207,7 +206,7 @@ class DecimalType(FractionalType):
     and scale (the number of digits on the right of dot). For example, (5, 2) can
     support the value from [-999.99 to 999.99].
 
-    The precision can be up to 38, the scale must less or equal to precision.
+    The precision can be up to 38, the scale must be less or equal to precision.
 
     When create a DecimalType, the default precision and scale is (10, 0). When infer
     schema from decimal.Decimal objects, it will be DecimalType(38, 18).
@@ -290,7 +289,8 @@ class ArrayType(DataType):
         >>> ArrayType(StringType(), False) == ArrayType(StringType())
         False
         """
-        assert isinstance(elementType, DataType), "elementType should be DataType"
+        assert isinstance(elementType, DataType),\
+            "elementType %s should be an instance of %s" % (elementType, DataType)
         self.elementType = elementType
         self.containsNull = containsNull
 
@@ -344,8 +344,10 @@ class MapType(DataType):
         ...        == MapType(StringType(), FloatType()))
         False
         """
-        assert isinstance(keyType, DataType), "keyType should be DataType"
-        assert isinstance(valueType, DataType), "valueType should be DataType"
+        assert isinstance(keyType, DataType),\
+            "keyType %s should be an instance of %s" % (keyType, DataType)
+        assert isinstance(valueType, DataType),\
+            "valueType %s should be an instance of %s" % (valueType, DataType)
         self.keyType = keyType
         self.valueType = valueType
         self.valueContainsNull = valueContainsNull
@@ -403,8 +405,9 @@ class StructField(DataType):
         ...      == StructField("f2", StringType(), True))
         False
         """
-        assert isinstance(dataType, DataType), "dataType should be DataType"
-        assert isinstance(name, basestring), "field name should be string"
+        assert isinstance(dataType, DataType),\
+            "dataType %s should be an instance of %s" % (dataType, DataType)
+        assert isinstance(name, basestring), "field name %s should be string" % (name)
         if not isinstance(name, str):
             name = name.encode('utf-8')
         self.name = name
@@ -749,42 +752,7 @@ _all_complex_types = dict((v.typeName(), v)
                           for v in [ArrayType, MapType, StructType])
 
 
-_FIXED_DECIMAL = re.compile("decimal\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)")
-
-
-_BRACKETS = {'(': ')', '[': ']', '{': '}'}
-
-
-def _ignore_brackets_split(s, separator):
-    """
-    Splits the given string by given separator, but ignore separators inside brackets pairs, e.g.
-    given "a,b" and separator ",", it will return ["a", "b"], but given "a<b,c>, d", it will return
-    ["a<b,c>", "d"].
-    """
-    parts = []
-    buf = ""
-    level = 0
-    for c in s:
-        if c in _BRACKETS.keys():
-            level += 1
-            buf += c
-        elif c in _BRACKETS.values():
-            if level == 0:
-                raise ValueError("Brackets are not correctly paired: %s" % s)
-            level -= 1
-            buf += c
-        elif c == separator and level > 0:
-            buf += c
-        elif c == separator:
-            parts.append(buf)
-            buf = ""
-        else:
-            buf += c
-
-    if len(buf) == 0:
-        raise ValueError("The %s cannot be the last char: %s" % (separator, s))
-    parts.append(buf)
-    return parts
+_FIXED_DECIMAL = re.compile(r"decimal\(\s*(\d+)\s*,\s*(-?\d+)\s*\)")
 
 
 def _parse_datatype_string(s):
@@ -897,6 +865,8 @@ def _parse_datatype_json_string(json_string):
     >>> complex_maptype = MapType(complex_structtype,
     ...                           complex_arraytype, False)
     >>> check_datatype(complex_maptype)
+    >>> # Decimal with negative scale.
+    >>> check_datatype(DecimalType(1,-1))
     """
     return _parse_datatype_json_value(json.loads(json_string))
 
@@ -1050,14 +1020,12 @@ def _infer_type(obj):
         for key, value in obj.items():
             if key is not None and value is not None:
                 return MapType(_infer_type(key), _infer_type(value), True)
-        else:
-            return MapType(NullType(), NullType(), True)
+        return MapType(NullType(), NullType(), True)
     elif isinstance(obj, list):
         for v in obj:
             if v is not None:
                 return ArrayType(_infer_type(obj[0]), True)
-        else:
-            return ArrayType(NullType(), True)
+        return ArrayType(NullType(), True)
     elif isinstance(obj, array):
         if obj.typecode in _array_type_mappings:
             return ArrayType(_array_type_mappings[obj.typecode](), False)
@@ -1222,7 +1190,7 @@ _acceptable_types = {
     DoubleType: (float,),
     DecimalType: (decimal.Decimal,),
     StringType: (str, unicode),
-    BinaryType: (bytearray,),
+    BinaryType: (bytearray, bytes),
     DateType: (datetime.date, datetime.datetime),
     TimestampType: (datetime.datetime,),
     ArrayType: (list, tuple, array),
@@ -1243,6 +1211,10 @@ def _make_type_verifier(dataType, nullable=True, name=None):
     >>> _make_type_verifier(StructType([]))(None)
     >>> _make_type_verifier(StringType())("")
     >>> _make_type_verifier(LongType())(0)
+    >>> _make_type_verifier(LongType())(1 << 64) # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+        ...
+    ValueError:...
     >>> _make_type_verifier(ArrayType(ShortType()))(list(range(3)))
     >>> _make_type_verifier(ArrayType(StringType()))(set()) # doctest: +IGNORE_EXCEPTION_DETAIL
     Traceback (most recent call last):
@@ -1351,6 +1323,16 @@ def _make_type_verifier(dataType, nullable=True, name=None):
 
         verify_value = verify_integer
 
+    elif isinstance(dataType, LongType):
+        def verify_long(obj):
+            assert_acceptable_types(obj)
+            verify_acceptable_types(obj)
+            if obj < -9223372036854775808 or obj > 9223372036854775807:
+                raise ValueError(
+                    new_msg("object of LongType out of range, got: %s" % obj))
+
+        verify_value = verify_long
+
     elif isinstance(dataType, ArrayType):
         element_verifier = _make_type_verifier(
             dataType.elementType, dataType.containsNull, name="element in array %s" % name)
@@ -1437,7 +1419,7 @@ def _create_row(fields, values):
 class Row(tuple):
 
     """
-    A row in L{DataFrame}.
+    A row in :class:`DataFrame`.
     The fields in it can be accessed:
 
     * like attributes (``row.key``)
@@ -1467,13 +1449,24 @@ class Row(tuple):
 
     >>> Person = Row("name", "age")
     >>> Person
-    <Row(name, age)>
+    <Row('name', 'age')>
     >>> 'name' in Person
     True
     >>> 'wrong_key' in Person
     False
     >>> Person("Alice", 11)
     Row(name='Alice', age=11)
+
+    This form can also be used to create rows as tuple values, i.e. with unnamed
+    fields. Beware that such Row objects have different equality semantics:
+
+    >>> row1 = Row("Alice", 11)
+    >>> row2 = Row(name="Alice", age=11)
+    >>> row1 == row2
+    False
+    >>> row3 = Row(a="Alice", b=11)
+    >>> row1 == row3
+    True
     """
 
     def __new__(self, *args, **kwargs):
@@ -1532,6 +1525,9 @@ class Row(tuple):
     # let object acts like class
     def __call__(self, *args):
         """create new Row object"""
+        if len(args) > len(self):
+            raise ValueError("Can not create Row with fields %s, expected %d values "
+                             "but got %s" % (self, len(self), args))
         return _create_row(self, args)
 
     def __getitem__(self, item):
@@ -1578,7 +1574,7 @@ class Row(tuple):
             return "Row(%s)" % ", ".join("%s=%r" % (k, v)
                                          for k, v in zip(self.__fields__, tuple(self)))
         else:
-            return "<Row(%s)>" % ", ".join(self)
+            return "<Row(%s)>" % ", ".join("%r" % field for field in self)
 
 
 class DateConverter(object):
@@ -1629,15 +1625,23 @@ def to_arrow_type(dt):
         arrow_type = pa.decimal128(dt.precision, dt.scale)
     elif type(dt) == StringType:
         arrow_type = pa.string()
+    elif type(dt) == BinaryType:
+        arrow_type = pa.binary()
     elif type(dt) == DateType:
         arrow_type = pa.date32()
     elif type(dt) == TimestampType:
         # Timestamps should be in UTC, JVM Arrow timestamps require a timezone to be read
         arrow_type = pa.timestamp('us', tz='UTC')
     elif type(dt) == ArrayType:
-        if type(dt.elementType) == TimestampType:
+        if type(dt.elementType) in [StructType, TimestampType]:
             raise TypeError("Unsupported type in conversion to Arrow: " + str(dt))
         arrow_type = pa.list_(to_arrow_type(dt.elementType))
+    elif type(dt) == StructType:
+        if any(type(field.dataType) == StructType for field in dt):
+            raise TypeError("Nested StructType not supported in conversion to Arrow")
+        fields = [pa.field(field.name, to_arrow_type(field.dataType), nullable=field.nullable)
+                  for field in dt]
+        arrow_type = pa.struct(fields)
     else:
         raise TypeError("Unsupported type in conversion to Arrow: " + str(dt))
     return arrow_type
@@ -1674,6 +1678,8 @@ def from_arrow_type(at):
         spark_type = DecimalType(precision=at.precision, scale=at.scale)
     elif types.is_string(at):
         spark_type = StringType()
+    elif types.is_binary(at):
+        spark_type = BinaryType()
     elif types.is_date32(at):
         spark_type = DateType()
     elif types.is_timestamp(at):
@@ -1682,6 +1688,12 @@ def from_arrow_type(at):
         if types.is_timestamp(at.value_type):
             raise TypeError("Unsupported type in conversion from Arrow: " + str(at))
         spark_type = ArrayType(from_arrow_type(at.value_type))
+    elif types.is_struct(at):
+        if any(types.is_struct(field.type) for field in at):
+            raise TypeError("Nested StructType not supported in conversion from Arrow: " + str(at))
+        return StructType(
+            [StructField(field.name, from_arrow_type(field.type), nullable=field.nullable)
+             for field in at])
     else:
         raise TypeError("Unsupported type in conversion from Arrow: " + str(at))
     return spark_type
@@ -1693,33 +1705,6 @@ def from_arrow_schema(arrow_schema):
     return StructType(
         [StructField(field.name, from_arrow_type(field.type), nullable=field.nullable)
          for field in arrow_schema])
-
-
-def _check_series_convert_date(series, data_type):
-    """
-    Cast the series to datetime.date if it's a date type, otherwise returns the original series.
-
-    :param series: pandas.Series
-    :param data_type: a Spark data type for the series
-    """
-    if type(data_type) == DateType:
-        return series.dt.date
-    else:
-        return series
-
-
-def _check_dataframe_convert_date(pdf, schema):
-    """ Correct date type value to use datetime.date.
-
-    Pandas DataFrame created from PyArrow uses datetime64[ns] for date type values, but we should
-    use datetime.date to match the behavior with when Arrow optimization is disabled.
-
-    :param pdf: pandas.DataFrame
-    :param schema: a Spark schema of the pandas.DataFrame
-    """
-    for field in schema:
-        pdf[field.name] = _check_series_convert_date(pdf[field.name], field.dataType)
-    return pdf
 
 
 def _get_local_timezone():

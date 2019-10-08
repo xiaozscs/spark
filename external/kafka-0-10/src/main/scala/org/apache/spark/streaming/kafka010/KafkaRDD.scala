@@ -19,13 +19,12 @@ package org.apache.spark.streaming.kafka010
 
 import java.{ util => ju }
 
-import scala.collection.mutable.ArrayBuffer
-
 import org.apache.kafka.clients.consumer.{ ConsumerConfig, ConsumerRecord }
 import org.apache.kafka.common.TopicPartition
 
 import org.apache.spark.{Partition, SparkContext, TaskContext}
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config.Network._
 import org.apache.spark.partial.{BoundedDouble, PartialResult}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.ExecutorCacheTaskLocation
@@ -66,16 +65,11 @@ private[spark] class KafkaRDD[K, V](
       " must be set to false for executor kafka params, else offsets may commit before processing")
 
   // TODO is it necessary to have separate configs for initial poll time vs ongoing poll time?
-  private val pollTimeout = conf.getLong("spark.streaming.kafka.consumer.poll.ms",
-    conf.getTimeAsMs("spark.network.timeout", "120s"))
-  private val cacheInitialCapacity =
-    conf.getInt("spark.streaming.kafka.consumer.cache.initialCapacity", 16)
-  private val cacheMaxCapacity =
-    conf.getInt("spark.streaming.kafka.consumer.cache.maxCapacity", 64)
-  private val cacheLoadFactor =
-    conf.getDouble("spark.streaming.kafka.consumer.cache.loadFactor", 0.75).toFloat
-  private val compacted =
-    conf.getBoolean("spark.streaming.kafka.allowNonConsecutiveOffsets", false)
+  private val pollTimeout = conf.get(CONSUMER_POLL_MS).getOrElse(conf.get(NETWORK_TIMEOUT) * 1000L)
+  private val cacheInitialCapacity = conf.get(CONSUMER_CACHE_INITIAL_CAPACITY)
+  private val cacheMaxCapacity = conf.get(CONSUMER_CACHE_MAX_CAPACITY)
+  private val cacheLoadFactor = conf.get(CONSUMER_CACHE_LOAD_FACTOR).toFloat
+  private val compacted = conf.get(ALLOW_NON_CONSECUTIVE_OFFSETS)
 
   override def persist(newLevel: StorageLevel): this.type = {
     logError("Kafka ConsumerRecord is not serializable. " +
@@ -239,26 +233,18 @@ private class KafkaRDDIterator[K, V](
   cacheLoadFactor: Float
 ) extends Iterator[ConsumerRecord[K, V]] {
 
-  val groupId = kafkaParams.get(ConsumerConfig.GROUP_ID_CONFIG).asInstanceOf[String]
+  context.addTaskCompletionListener[Unit](_ => closeIfNeeded())
 
-  context.addTaskCompletionListener(_ => closeIfNeeded())
-
-  val consumer = if (useConsumerCache) {
-    CachedKafkaConsumer.init(cacheInitialCapacity, cacheMaxCapacity, cacheLoadFactor)
-    if (context.attemptNumber >= 1) {
-      // just in case the prior attempt failures were cache related
-      CachedKafkaConsumer.remove(groupId, part.topic, part.partition)
-    }
-    CachedKafkaConsumer.get[K, V](groupId, part.topic, part.partition, kafkaParams)
-  } else {
-    CachedKafkaConsumer.getUncached[K, V](groupId, part.topic, part.partition, kafkaParams)
+  val consumer = {
+    KafkaDataConsumer.init(cacheInitialCapacity, cacheMaxCapacity, cacheLoadFactor)
+    KafkaDataConsumer.acquire[K, V](part.topicPartition(), kafkaParams, context, useConsumerCache)
   }
 
   var requestOffset = part.fromOffset
 
   def closeIfNeeded(): Unit = {
-    if (!useConsumerCache && consumer != null) {
-      consumer.close()
+    if (consumer != null) {
+      consumer.release()
     }
   }
 

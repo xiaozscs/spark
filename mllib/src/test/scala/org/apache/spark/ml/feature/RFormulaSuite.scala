@@ -17,6 +17,7 @@
 
 package org.apache.spark.ml.feature
 
+import org.apache.spark.SparkException
 import org.apache.spark.ml.attribute._
 import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.ml.param.ParamsSuite
@@ -104,7 +105,7 @@ class RFormulaSuite extends MLTest with DefaultReadWriteTest {
     testTransformerByInterceptingException[(Int, Boolean)](
       original,
       model,
-      "Label column already exists and is not of type NumericType.",
+      "Label column already exists and is not of type numeric.",
       "x")
   }
 
@@ -136,14 +137,17 @@ class RFormulaSuite extends MLTest with DefaultReadWriteTest {
 
   test("encodes string terms") {
     val formula = new RFormula().setFormula("id ~ a + b")
-    val original = Seq((1, "foo", 4), (2, "bar", 4), (3, "bar", 5), (4, "baz", 5))
+    val original = Seq((1, "foo", 4), (2, "bar", 4), (3, "bar", 5), (4, "baz", 5),
+      (5, "bar", 6), (6, "foo", 6))
       .toDF("id", "a", "b")
     val model = formula.fit(original)
     val expected = Seq(
         (1, "foo", 4, Vectors.dense(0.0, 1.0, 4.0), 1.0),
         (2, "bar", 4, Vectors.dense(1.0, 0.0, 4.0), 2.0),
         (3, "bar", 5, Vectors.dense(1.0, 0.0, 5.0), 3.0),
-        (4, "baz", 5, Vectors.dense(0.0, 0.0, 5.0), 4.0)
+        (4, "baz", 5, Vectors.dense(0.0, 0.0, 5.0), 4.0),
+        (5, "bar", 6, Vectors.dense(1.0, 0.0, 6.0), 5.0),
+        (6, "foo", 6, Vectors.dense(0.0, 1.0, 6.0), 6.0)
       ).toDF("id", "a", "b", "features", "label")
     testRFormulaTransform[(Int, String, Int)](original, model, expected)
   }
@@ -302,7 +306,8 @@ class RFormulaSuite extends MLTest with DefaultReadWriteTest {
   test("index string label") {
     val formula = new RFormula().setFormula("id ~ a + b")
     val original =
-      Seq(("male", "foo", 4), ("female", "bar", 4), ("female", "bar", 5), ("male", "baz", 5))
+      Seq(("male", "foo", 4), ("female", "bar", 4), ("female", "bar", 5), ("male", "baz", 5),
+        ("female", "bar", 6), ("female", "foo", 6))
         .toDF("id", "a", "b")
     val model = formula.fit(original)
     val attr = NominalAttribute.defaultAttr
@@ -310,7 +315,9 @@ class RFormulaSuite extends MLTest with DefaultReadWriteTest {
         ("male", "foo", 4, Vectors.dense(0.0, 1.0, 4.0), 1.0),
         ("female", "bar", 4, Vectors.dense(1.0, 0.0, 4.0), 0.0),
         ("female", "bar", 5, Vectors.dense(1.0, 0.0, 5.0), 0.0),
-        ("male", "baz", 5, Vectors.dense(0.0, 0.0, 5.0), 1.0)
+        ("male", "baz", 5, Vectors.dense(0.0, 0.0, 5.0), 1.0),
+        ("female", "bar", 6, Vectors.dense(1.0, 0.0, 6.0), 0.0),
+        ("female", "foo", 6, Vectors.dense(0.0, 1.0, 6.0), 0.0)
     ).toDF("id", "a", "b", "features", "label")
       .select($"id", $"a", $"b", $"features", $"label".as("label", attr.toMetadata()))
     testRFormulaTransform[(String, String, Int)](original, model, expected)
@@ -319,7 +326,8 @@ class RFormulaSuite extends MLTest with DefaultReadWriteTest {
   test("force to index label even it is numeric type") {
     val formula = new RFormula().setFormula("id ~ a + b").setForceIndexLabel(true)
     val original = spark.createDataFrame(
-      Seq((1.0, "foo", 4), (1.0, "bar", 4), (0.0, "bar", 5), (1.0, "baz", 5))
+      Seq((1.0, "foo", 4), (1.0, "bar", 4), (0.0, "bar", 5), (1.0, "baz", 5),
+      (1.0, "bar", 6), (0.0, "foo", 6))
     ).toDF("id", "a", "b")
     val model = formula.fit(original)
     val attr = NominalAttribute.defaultAttr
@@ -327,7 +335,9 @@ class RFormulaSuite extends MLTest with DefaultReadWriteTest {
         (1.0, "foo", 4, Vectors.dense(0.0, 1.0, 4.0), 0.0),
         (1.0, "bar", 4, Vectors.dense(1.0, 0.0, 4.0), 0.0),
         (0.0, "bar", 5, Vectors.dense(1.0, 0.0, 5.0), 1.0),
-        (1.0, "baz", 5, Vectors.dense(0.0, 0.0, 5.0), 0.0))
+        (1.0, "baz", 5, Vectors.dense(0.0, 0.0, 5.0), 0.0),
+        (1.0, "bar", 6, Vectors.dense(1.0, 0.0, 6.0), 0.0),
+        (0.0, "foo", 6, Vectors.dense(0.0, 1.0, 6.0), 1.0))
       .toDF("id", "a", "b", "features", "label")
       .select($"id", $"a", $"b", $"features", $"label".as("label", attr.toMetadata()))
     testRFormulaTransform[(Double, String, Int)](original, model, expected)
@@ -335,14 +345,17 @@ class RFormulaSuite extends MLTest with DefaultReadWriteTest {
 
   test("attribute generation") {
     val formula = new RFormula().setFormula("id ~ a + b")
-    val original = Seq((1, "foo", 4), (2, "bar", 4), (3, "bar", 5), (4, "baz", 5))
+    val original = Seq((1, "foo", 4), (2, "bar", 4), (3, "bar", 5), (4, "baz", 5),
+      (1, "bar", 6), (0, "foo", 6))
       .toDF("id", "a", "b")
     val model = formula.fit(original)
     val expected = Seq(
       (1, "foo", 4, Vectors.dense(0.0, 1.0, 4.0), 1.0),
       (2, "bar", 4, Vectors.dense(1.0, 0.0, 4.0), 2.0),
       (3, "bar", 5, Vectors.dense(1.0, 0.0, 5.0), 3.0),
-      (4, "baz", 5, Vectors.dense(0.0, 0.0, 5.0), 4.0))
+      (4, "baz", 5, Vectors.dense(0.0, 0.0, 5.0), 4.0),
+      (1, "bar", 6, Vectors.dense(1.0, 0.0, 6.0), 1.0),
+      (0, "foo", 6, Vectors.dense(0.0, 1.0, 6.0), 0.0))
       .toDF("id", "a", "b", "features", "label")
     val expectedAttrs = new AttributeGroup(
       "features",
@@ -592,4 +605,26 @@ class RFormulaSuite extends MLTest with DefaultReadWriteTest {
         assert(features.toArray === a +: b.toArray)
     }
   }
+
+  test("SPARK-23562 RFormula handleInvalid should handle invalid values in non-string columns.") {
+    val d1 = Seq(
+      (1001L, "a"),
+      (1002L, "b")).toDF("id1", "c1")
+    val d2 = Seq[(java.lang.Long, String)](
+      (20001L, "x"),
+      (20002L, "y"),
+      (null, null)).toDF("id2", "c2")
+    val dataset = d1.crossJoin(d2)
+
+    def get_output(mode: String): DataFrame = {
+      val formula = new RFormula().setFormula("c1 ~ id2").setHandleInvalid(mode)
+      formula.fit(dataset).transform(dataset).select("features", "label")
+    }
+
+    assert(intercept[SparkException](get_output("error").collect())
+      .getMessage.contains("Encountered null while assembling a row"))
+    assert(get_output("skip").count() == 4)
+    assert(get_output("keep").count() == 6)
+  }
+
 }
