@@ -74,12 +74,13 @@ class KafkaDataConsumerSuite
     super.beforeEach()
 
     fetchedDataPool = {
-      val fetchedDataPoolMethod = PrivateMethod[FetchedDataPool]('fetchedDataPool)
+      val fetchedDataPoolMethod = PrivateMethod[FetchedDataPool](Symbol("fetchedDataPool"))
       KafkaDataConsumer.invokePrivate(fetchedDataPoolMethod())
     }
 
     consumerPool = {
-      val internalKafkaConsumerPoolMethod = PrivateMethod[InternalKafkaConsumerPool]('consumerPool)
+      val internalKafkaConsumerPoolMethod =
+        PrivateMethod[InternalKafkaConsumerPool](Symbol("consumerPool"))
       KafkaDataConsumer.invokePrivate(internalKafkaConsumerPoolMethod())
     }
 
@@ -89,7 +90,7 @@ class KafkaDataConsumerSuite
 
   test("SPARK-19886: Report error cause correctly in reportDataLoss") {
     val cause = new Exception("D'oh!")
-    val reportDataLoss = PrivateMethod[Unit]('reportDataLoss0)
+    val reportDataLoss = PrivateMethod[Unit](Symbol("reportDataLoss0"))
     val e = intercept[IllegalStateException] {
       KafkaDataConsumer.invokePrivate(reportDataLoss(true, "message", cause))
     }
@@ -194,7 +195,7 @@ class KafkaDataConsumerSuite
 
     @volatile var error: Throwable = null
 
-    def consume(i: Int): Unit = {
+    def consume(): Unit = {
       val taskContext = if (Random.nextBoolean) {
         new TaskContextImpl(0, 0, 0, 0, attemptNumber = Random.nextInt(2), null, null, null)
       } else {
@@ -232,9 +233,9 @@ class KafkaDataConsumerSuite
 
     val threadpool = Executors.newFixedThreadPool(numThreads)
     try {
-      val futures = (1 to numConsumerUsages).map { i =>
+      val futures = (1 to numConsumerUsages).map { _ =>
         threadpool.submit(new Runnable {
-          override def run(): Unit = { consume(i) }
+          override def run(): Unit = { consume() }
         })
       }
       futures.foreach(_.get(1, TimeUnit.MINUTES))

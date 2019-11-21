@@ -17,6 +17,8 @@
 
 package org.apache.spark.sql.catalyst.analysis
 
+import org.scalatest.Assertions._
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.dsl.plans._
@@ -532,7 +534,7 @@ class AnalysisErrorSuite extends AnalysisTest {
       Seq(a, Alias(InSubquery(Seq(a), ListQuery(LocalRelation(b))), "c")()),
       LocalRelation(a))
     assertAnalysisError(plan, "Predicate sub-queries can only be used" +
-        " in Filter/DeleteFromTable" :: Nil)
+        " in Filter" :: Nil)
   }
 
   test("PredicateSubQuery is used is a nested condition") {

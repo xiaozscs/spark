@@ -21,7 +21,6 @@ import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, Da
 import java.util.concurrent.atomic.AtomicInteger
 
 import scala.collection.mutable.ArrayBuffer
-import scala.concurrent.ExecutionContext
 
 import org.codehaus.commons.compiler.CompileException
 import org.codehaus.janino.InternalCompilerException
@@ -33,7 +32,7 @@ import org.apache.spark.rdd.{RDD, RDDOperationScope}
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.expressions.codegen.{Predicate => GenPredicate, _}
+import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical._
@@ -471,28 +470,6 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
     MutableProjection.create(expressions, inputSchema)
   }
 
-  private def genInterpretedPredicate(
-      expression: Expression, inputSchema: Seq[Attribute]): InterpretedPredicate = {
-    val str = expression.toString
-    val logMessage = if (str.length > 256) {
-      str.substring(0, 256 - 3) + "..."
-    } else {
-      str
-    }
-    logWarning(s"Codegen disabled for this expression:\n $logMessage")
-    InterpretedPredicate.create(expression, inputSchema)
-  }
-
-  protected def newPredicate(
-      expression: Expression, inputSchema: Seq[Attribute]): GenPredicate = {
-    try {
-      GeneratePredicate.generate(expression, inputSchema)
-    } catch {
-      case _ @ (_: InternalCompilerException | _: CompileException) if codeGenFallBack =>
-        genInterpretedPredicate(expression, inputSchema)
-    }
-  }
-
   protected def newOrdering(
       order: Seq[SortOrder], inputSchema: Seq[Attribute]): Ordering[InternalRow] = {
     GenerateOrdering.generate(order, inputSchema)
@@ -506,6 +483,15 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
       case (dt, index) => SortOrder(BoundReference(index, dt, nullable = true), Ascending)
     }
     newOrdering(order, Seq.empty)
+  }
+
+  /**
+   * Cleans up the resources used by the physical operator (if any). In general, all the resources
+   * should be cleaned up when the task finishes but operators like SortMergeJoinExec and LimitExec
+   * may want eager cleanup to free up tight resources (e.g., memory).
+   */
+  protected[sql] def cleanupResources(): Unit = {
+    children.foreach(_.cleanupResources())
   }
 }
 
